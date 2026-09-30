@@ -1,4 +1,4 @@
-package com.rntest
+package com.yukee520.transcriber
 
 import android.app.Application
 import com.facebook.react.PackageList
