@@ -62,7 +62,7 @@ export default function AddCreatorScreen() {
       <ScreenHeader title="Add creator" showBack />
       <KeyboardAvoidingView
         className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={RNAPlatform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
           contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
