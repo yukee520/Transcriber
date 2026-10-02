@@ -41,15 +41,25 @@ export default function CreatorDetailScreen() {
   const route = useRoute<DetailRoute>();
   const { creatorId } = route.params;
 
-  const { items: allCreators, isLoading: loadingCreators, isError: creatorsError, error: creatorsErrObj, refetch: refetchCreators } =
-    useCreators();
+  const {
+    items: allCreators,
+    isLoading: loadingCreators,
+    isError: creatorsError,
+    error: creatorsErrObj,
+    refetch: refetchCreators,
+  } = useCreators();
+
   const creator = useMemo(
     () => allCreators.find((c) => c.id === creatorId),
     [allCreators, creatorId],
   );
 
-  const { items: transcripts, isLoading: loadingTranscripts, refetch, isRefetching } =
-    useTranscripts({ creatorId });
+  const {
+    items: transcripts,
+    isLoading: loadingTranscripts,
+    refetch,
+    isRefetching,
+  } = useTranscripts({ creatorId });
 
   const deleteMutation = useDeleteCreator();
   const toggleMutation = useToggleCreatorStatus();
@@ -67,6 +77,10 @@ export default function CreatorDetailScreen() {
   const handleSyncNow = useCallback(() => {
     void runSync({ creatorIds: [creatorId] });
   }, [runSync, creatorId]);
+
+  const handleChooseVideos = useCallback(() => {
+    navigation.navigate('CreatorVideos', { creatorId });
+  }, [navigation, creatorId]);
 
   const handleDelete = useCallback(() => {
     if (!creator) return;
@@ -269,6 +283,18 @@ export default function CreatorDetailScreen() {
                 </View>
               </View>
 
+              <View className="mt-3">
+                <Button
+                  label="Choose videos to transcribe"
+                  onPress={handleChooseVideos}
+                  variant="secondary"
+                  icon="list-outline"
+                  fullWidth
+                  size="sm"
+                  disabled={!isBackendConfigured || isPaused}
+                />
+              </View>
+
               {!isBackendConfigured ? (
                 <Text className="text-xs text-muted dark:text-dark-muted mt-2 text-center">
                   Configure a backend in Settings to enable syncing.
@@ -292,13 +318,15 @@ export default function CreatorDetailScreen() {
               title="No transcripts yet"
               message={
                 isBackendConfigured
-                  ? 'Tap "Sync now" above to fetch and transcribe this creator\'s recent videos.'
+                  ? 'Tap "Sync now" for recent videos, or "Choose videos to transcribe" to pick specific ones.'
                   : 'Add a transcription backend in Settings, then sync to build a transcript library for this creator.'
               }
-              actionLabel={isBackendConfigured ? 'Sync now' : 'Open settings'}
+              actionLabel={
+                isBackendConfigured ? 'Choose videos' : 'Open settings'
+              }
               onAction={() => {
                 if (isBackendConfigured) {
-                  handleSyncNow();
+                  handleChooseVideos();
                 } else {
                   navigation.navigate('Settings');
                 }
