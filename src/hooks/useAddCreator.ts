@@ -33,21 +33,32 @@ export function useAddCreator() {
         );
       }
 
-      const { backendUrl } = useSettingsStore.getState();
-      let displayName = name?.trim() || username;
+      const typedName = (name ?? '').trim();
+      let displayName = typedName || username;
       let avatarUrl: string | undefined;
+
+      const { backendUrl } = useSettingsStore.getState();
 
       if (backendUrl.trim()) {
         try {
           const validated = await validateCreator({ platform, username });
+
           if (!validated.valid) {
             throw new Error(
               validated.errorMessage ??
                 `Could not find @${username} on ${platform}.`,
             );
           }
-          if (validated.name) displayName = validated.name;
-          avatarUrl = validated.avatarUrl;
+
+          // Only fall back to the server-returned name when the user
+          // did not type one themselves. The user's choice always wins.
+          if (!typedName && validated.name && validated.name.trim().length > 0) {
+            displayName = validated.name.trim();
+          }
+
+          if (validated.avatarUrl) {
+            avatarUrl = validated.avatarUrl;
+          }
         } catch (err) {
           if (err instanceof ApiClientError && err.status === 404) {
             throw new Error(`@${username} was not found on ${platform}.`);
