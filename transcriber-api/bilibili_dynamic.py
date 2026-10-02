@@ -43,6 +43,13 @@ class DynamicVideo:
     dynamic_type: str
 
 
+@dataclass
+class DynamicFetchResult:
+    videos: List[DynamicVideo]
+    next_offset: Optional[str]
+    has_more: bool
+
+
 _wbi_keys_cache: Dict[str, Any] = {"keys": None, "fetched_at": 0.0}
 _WBI_TTL_SECONDS = 3600
 
@@ -52,7 +59,9 @@ def _load_cookies() -> Dict[str, str]:
     if not COOKIES_FILE.is_file():
         return cookies
     try:
-        for raw_line in COOKIES_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
+        for raw_line in COOKIES_FILE.read_text(
+            encoding="utf-8", errors="ignore"
+        ).splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -62,7 +71,7 @@ def _load_cookies() -> Dict[str, str]:
             domain = parts[0]
             name = parts[5]
             value = parts[6]
-            if "bilibili" in domain or "bilibili" in COOKIES_FILE.name:
+            if "bilibili" in domain:
                 cookies[name] = value
     except OSError as exc:
         logger.warning("Failed to read cookies file: %s", exc)
@@ -132,7 +141,14 @@ def _sign_params(params: Dict[str, Any]) -> str:
     for key, value in params.items():
         if value is None:
             continue
-        cleaned[key] = str(value).replace("!", "").replace("'", "").replace("(", "").replace(")", "").replace("*", "")
+        cleaned[key] = (
+            str(value)
+            .replace("!", "")
+            .replace("'", "")
+            .replace("(", "")
+            .replace(")", "")
+            .replace("*", "")
+        )
 
     cleaned["wts"] = str(int(time.time()))
     sorted_keys = sorted(cleaned.keys())
@@ -152,11 +168,7 @@ def fetch_dynamic_page(uid: str, offset: str = "") -> Dict[str, Any]:
     if offset:
         params["offset"] = offset
 
-    try:
-        signed = _sign_params(params)
-    except BilibiliDynamicError:
-        raise
-
+    signed = _sign_params(params)
     url = f"{DYNAMIC_FEED_URL}?{signed}"
 
     try:
@@ -185,7 +197,6 @@ def fetch_dynamic_page(uid: str, offset: str = "") -> Dict[str, Any]:
     if code != 0:
         message = payload.get("message") or payload.get("msg") or "unknown error"
         if code in (-352, -412, -799):
-            # WBI keys may have rotated; force refresh and retry once.
             _fetch_wbi_keys(force=True)
             raise BilibiliDynamicError(
                 f"Bilibili rejected the request (code {code}: {message}). "
@@ -215,6 +226,8 @@ def _extract_video_from_item(item: Dict[str, Any]) -> Optional[DynamicVideo]:
 
         pub_ts = int(item.get("pub_ts") or 0)
         published = _ts_to_iso(pub_ts)
+        if not published:
+            published = _parse_date_from_title(title)
 
         return DynamicVideo(
             video_id=bvid,
@@ -259,14 +272,37 @@ def _ts_to_iso(ts: int) -> str:
         return ""
 
 
+def _parse_date_from_title(title: str) -> str:
+    """Best-effort: extract a YYYY年MM月DD日 pattern from Bilibili replay titles."""
+    import re
+
+    match = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", title)
+    if not match:
+        return ""
+    year, month, day = match.groups()
+    try:
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}T00:00:00.000Z"
+    except (TypeError, ValueError):
+        return ""
+
+
 def fetch_dynamic_videos(
     uid: str,
     limit: int = 100,
+    start_offset: str = "",
     max_pages: int = 20,
-) -> List[DynamicVideo]:
+) -> DynamicFetchResult:
+    """
+    Fetch a page of dynamic posts for a creator.
+
+    Returns up to `limit` video entries in this call. If the response contains
+    more items than fit, the caller can pass back `next_offset` to continue.
+    """
     results: List[DynamicVideo] = []
-    seen = set()
-    offset = ""
+    seen: set[str] = set()
+    offset = start_offset
+    next_offset: Optional[str] = None
+    has_more = False
     pages = 0
 
     while pages < max_pages and len(results) < limit:
@@ -277,6 +313,7 @@ def fetch_dynamic_videos(
             if pages == 1:
                 raise
             logger.warning("Dynamic page %d failed: %s", pages, exc)
+            has_more = True
             break
 
         items = data.get("items") or []
@@ -293,12 +330,30 @@ def fetch_dynamic_videos(
             if len(results) >= limit:
                 break
 
-        if not data.get("has_more"):
+        page_has_more = bool(data.get("has_more"))
+        candidate_offset = str(data.get("offset") or "")
+
+        if len(results) >= limit:
+            has_more = page_has_more or bool(candidate_offset)
+            next_offset = candidate_offset or None
             break
 
-        next_offset = str(data.get("offset") or "")
-        if not next_offset or next_offset == offset:
+        if not page_has_more:
+            has_more = False
+            next_offset = None
             break
-        offset = next_offset
 
-    return results[:limit]
+        if not candidate_offset or candidate_offset == offset:
+            has_more = False
+            next_offset = None
+            break
+
+        offset = candidate_offset
+        has_more = True
+        next_offset = candidate_offset
+
+    return DynamicFetchResult(
+        videos=results[:limit],
+        next_offset=next_offset,
+        has_more=has_more,
+    )
