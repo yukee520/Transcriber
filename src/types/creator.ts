@@ -4,6 +4,7 @@ export type Platform =
   | 'instagram'
   | 'twitter'
   | 'facebook'
+  | 'bilibili'
   | 'other';
 
 export type CreatorStatus = 'active' | 'paused';
