@@ -20,6 +20,7 @@ export default function VideoSelectCard({
   onToggle,
 }: VideoSelectCardProps) {
   const isDisabled = disabled || saved;
+  const hasTitle = video.title.trim().length > 0;
 
   const handlePress = () => {
     if (isDisabled) return;
@@ -32,7 +33,7 @@ export default function VideoSelectCard({
       disabled={isDisabled}
       accessibilityRole="checkbox"
       accessibilityState={{ checked: selected, disabled: isDisabled }}
-      accessibilityLabel={`Video: ${video.title || video.videoId}`}
+      accessibilityLabel={`Video: ${hasTitle ? video.title : video.videoId}`}
       className={[
         'bg-card dark:bg-dark-card border rounded-2xl overflow-hidden',
         selected
@@ -58,16 +59,34 @@ export default function VideoSelectCard({
                 {formatDuration(video.durationSeconds)}
               </Text>
             </View>
-          ) : null}
+          ) : (
+            <View className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded">
+              <Text className="text-white text-[10px] font-medium">video</Text>
+            </View>
+          )}
         </View>
 
         <View className="flex-1 justify-between">
-          <Text
-            numberOfLines={2}
-            className="text-sm font-semibold text-text dark:text-dark-text leading-5"
-          >
-            {video.title || video.videoId || 'Untitled video'}
-          </Text>
+          {hasTitle ? (
+            <Text
+              numberOfLines={2}
+              className="text-sm font-semibold text-text dark:text-dark-text leading-5"
+            >
+              {video.title}
+            </Text>
+          ) : (
+            <View>
+              <Text className="text-sm font-semibold text-text dark:text-dark-text">
+                Video {video.videoId.slice(0, 10)}
+              </Text>
+              <Text
+                numberOfLines={1}
+                className="text-[11px] text-muted dark:text-dark-muted mt-0.5"
+              >
+                {video.videoId}
+              </Text>
+            </View>
+          )}
 
           <View className="flex-row items-center justify-between mt-2">
             {saved ? (
