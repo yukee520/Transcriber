@@ -28,6 +28,7 @@ from ytdlp_client import (
     list_creator_videos,
     validate_creator,
 )
+from bilibili_dynamic import BilibiliDynamicError, fetch_dynamic_videos
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
@@ -35,7 +36,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("transcriber-api")
 
-app = FastAPI(title="Transcriber API", version="1.1.0")
+app = FastAPI(title="Transcriber API", version="1.2.0")
 
 
 class ValidateCreatorRequest(BaseModel):
@@ -93,6 +94,15 @@ class TitlesResponse(BaseModel):
     titles: list[VideoTitleItem]
 
 
+class DynamicVideosRequest(BaseModel):
+    uid: str = Field(..., min_length=1)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class DynamicVideosResponse(BaseModel):
+    videos: list[VideoItem]
+
+
 class TranscribeRequest(BaseModel):
     platform: str
     videoUrl: str
@@ -147,7 +157,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "service": "transcriber-api",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "auth_required": bool(API_KEY),
         "default_model": DEFAULT_MODEL,
     }
@@ -253,6 +263,44 @@ def videos_titles(payload: TitlesRequest) -> TitlesResponse:
         )
 
     return TitlesResponse(titles=out)
+
+
+@app.post(
+    "/videos/dynamic",
+    response_model=DynamicVideosResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def videos_dynamic(payload: DynamicVideosRequest) -> DynamicVideosResponse:
+    if not payload.uid.strip():
+        raise HTTPException(status_code=400, detail="uid is required")
+
+    try:
+        entries = fetch_dynamic_videos(
+            uid=payload.uid.strip(),
+            limit=payload.limit,
+        )
+    except BilibiliDynamicError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dynamic feed crashed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dynamic feed error: {exc}",
+        ) from exc
+
+    return DynamicVideosResponse(
+        videos=[
+            VideoItem(
+                videoId=v.video_id,
+                title=v.title,
+                url=v.url,
+                thumbnailUrl=v.thumbnail_url,
+                durationSeconds=v.duration_seconds,
+                publishedAt=v.published_at,
+            )
+            for v in entries
+        ]
+    )
 
 
 @app.post(
