@@ -60,37 +60,61 @@ def _run_ytdlp(args: List[str], timeout: int) -> subprocess.CompletedProcess:
 
 def _classify_error(stderr: str, stdout: str) -> str:
     combined = f"{stderr}\n{stdout}".lower()
-    if "sign in to confirm" in combined or "bot" in combined and "sign" in combined:
+
+    if "sign in to confirm" in combined or ("bot" in combined and "sign" in combined):
         return (
-            "YouTube is blocking this download (bot detection). "
-            "Add a cookies.txt file to the Termux home directory to bypass this."
+            "The platform is blocking this download (bot detection). "
+            "Add a valid cookies.txt file to the Termux home directory."
+        )
+    if "http error 412" in combined or "412 precondition failed" in combined:
+        return (
+            "Bilibili rejected the request (HTTP 412). "
+            "Your cookies.txt may be missing, expired, or the session was invalidated."
         )
     if "http error 403" in combined:
         return (
             "The platform refused the download (HTTP 403). "
-            "This usually means cookies or an updated yt-dlp version is needed."
+            "An updated yt-dlp or fresh cookies may be required."
         )
-    if "video unavailable" in combined:
+    if "video unavailable" in combined or "video is unavailable" in combined:
         return "The video is unavailable or has been removed."
     if "private video" in combined:
         return "The video is private."
+    if "members-only" in combined or "premium" in combined:
+        return "This video requires a paid account and cannot be downloaded."
+    if "geo" in combined and "block" in combined:
+        return "The video is geo-blocked in your region."
     if "not found" in combined or "404" in combined:
         return "The creator or video could not be found."
     if "unsupported url" in combined:
         return "This URL is not supported by the downloader."
+    if "unable to extract" in combined:
+        return "yt-dlp could not parse this page. Try updating yt-dlp."
     if "timed out" in combined:
         return "The download timed out. Try again."
     return "yt-dlp failed to fetch the requested resource."
 
 
+def _looks_like_url(value: str) -> bool:
+    v = value.strip().lower()
+    return v.startswith("http://") or v.startswith("https://")
+
+
 def _normalize_platform_url(platform: str, username: str) -> str:
-    handle = username.lstrip("@").strip()
+    raw = username.strip()
+
+    if _looks_like_url(raw):
+        return raw
+
+    handle = raw.lstrip("@").strip()
+
     mapping = {
         "youtube": f"https://www.youtube.com/@{handle}",
         "tiktok": f"https://www.tiktok.com/@{handle}",
         "instagram": f"https://www.instagram.com/{handle}/",
         "twitter": f"https://x.com/{handle}",
         "facebook": f"https://www.facebook.com/{handle}",
+        "bilibili": f"https://space.bilibili.com/{handle}",
     }
     return mapping.get(platform, handle)
 
@@ -104,14 +128,17 @@ def list_creator_videos(
     url = _normalize_platform_url(platform, username)
 
     args = [
-        "--flat-playlist",
         "--playlist-end",
         str(limit),
         "--dump-json",
         "--skip-download",
         "--no-warnings",
-        url,
     ]
+
+    if platform != "bilibili":
+        args.insert(0, "--flat-playlist")
+
+    args.append(url)
 
     result = _run_ytdlp(args, VIDEOS_LIST_TIMEOUT_SECONDS)
 
@@ -138,6 +165,8 @@ def list_creator_videos(
         thumbnail_url = None
         if isinstance(thumbnails, list) and thumbnails:
             thumbnail_url = thumbnails[-1].get("url")
+        if not thumbnail_url:
+            thumbnail_url = data.get("thumbnail")
 
         duration = data.get("duration")
         try:
@@ -170,7 +199,6 @@ def list_creator_videos(
 def validate_creator(platform: str, username: str) -> CreatorInfo:
     url = _normalize_platform_url(platform, username)
     args = [
-        "--flat-playlist",
         "--playlist-end",
         "1",
         "--dump-single-json",
@@ -178,6 +206,9 @@ def validate_creator(platform: str, username: str) -> CreatorInfo:
         "--no-warnings",
         url,
     ]
+
+    if platform != "bilibili":
+        args.insert(0, "--flat-playlist")
 
     try:
         result = _run_ytdlp(args, VALIDATE_TIMEOUT_SECONDS)
@@ -193,14 +224,20 @@ def validate_creator(platform: str, username: str) -> CreatorInfo:
     except (json.JSONDecodeError, IndexError):
         data = {}
 
-    name = data.get("channel") or data.get("uploader") or data.get("title")
+    name = (
+        data.get("channel")
+        or data.get("uploader")
+        or data.get("uploader_id")
+        or data.get("title")
+    )
     avatar_url = None
     thumbnails = data.get("thumbnails") or []
     if isinstance(thumbnails, list) and thumbnails:
         avatar_url = thumbnails[-1].get("url")
 
     if not name:
-        name = f"@{username.lstrip('@')}"
+        handle = username.strip().lstrip("@")
+        name = f"@{handle}" if handle else "Unknown creator"
 
     return CreatorInfo(valid=True, name=name, avatar_url=avatar_url, error_message=None)
 
@@ -235,13 +272,20 @@ def download_audio(
 
     if result.returncode != 0:
         message = _classify_error(result.stderr, result.stdout)
-        if "cookies" in message.lower():
-            raise YtdlpError(message, status_hint=502)
         raise YtdlpError(message, status_hint=502)
 
     candidates = sorted(dest_dir.glob("audio.*"))
     for candidate in candidates:
-        if candidate.suffix.lower() in (".mp3", ".m4a", ".wav", ".ogg", ".opus", ".webm"):
+        if candidate.suffix.lower() in (
+            ".mp3",
+            ".m4a",
+            ".wav",
+            ".ogg",
+            ".opus",
+            ".webm",
+            ".aac",
+            ".flac",
+        ):
             return candidate
 
     raise YtdlpError(
@@ -262,4 +306,6 @@ def detect_platform_from_url(url: str) -> str:
         return "twitter"
     if "facebook.com" in value or "fb.com" in value:
         return "facebook"
+    if "bilibili.com" in value or "b23.tv" in value or "bilibili.tv" in value:
+        return "bilibili"
     return "other"
