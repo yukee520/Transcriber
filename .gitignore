@@ -106,3 +106,7 @@ Thumbs.db
 android/app/release.keystore
 *.keystore
 !debug.keystore
+cookies.txt
+cookies*.txt
+__pycache__/
+*.pyc
