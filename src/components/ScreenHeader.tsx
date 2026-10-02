@@ -8,6 +8,7 @@ interface ScreenHeaderProps {
   subtitle?: string;
   showBack?: boolean;
   right?: ReactNode;
+  onBack?: () => void;
 }
 
 export default function ScreenHeader({
@@ -15,8 +16,17 @@ export default function ScreenHeader({
   subtitle,
   showBack = false,
   right,
+  onBack,
 }: ScreenHeaderProps) {
   const navigation = useNavigation();
+
+  const handleBack = () => {
+    if (onBack) {
+      onBack();
+    } else {
+      navigation.goBack();
+    }
+  };
 
   return (
     <View className="flex-row items-center px-4 py-3 border-b border-border dark:border-dark-border bg-background dark:bg-dark-background">
