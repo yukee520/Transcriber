@@ -218,17 +218,6 @@ export default function CreatorVideosScreen() {
   const renderFooter = () => {
     if (videos.length === 0) return null;
 
-    if (source === 'dynamic') {
-      return (
-        <View className="py-4 items-center">
-          <Text className="text-xs text-muted dark:text-dark-muted">
-            {videos.length} {videos.length === 1 ? 'post' : 'posts'} loaded from
-            the dynamic feed
-          </Text>
-        </View>
-      );
-    }
-
     if (isLoadingMore) {
       return (
         <View className="py-4 items-center">
@@ -244,7 +233,9 @@ export default function CreatorVideosScreen() {
       return (
         <View className="py-4 items-center">
           <Text className="text-xs text-muted dark:text-dark-muted">
-            No more videos
+            {source === 'dynamic'
+              ? `${videos.length} posts loaded · end of feed`
+              : 'No more videos'}
           </Text>
         </View>
       );
