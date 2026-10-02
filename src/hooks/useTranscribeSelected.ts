@@ -174,8 +174,14 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
         currentTitle: '',
       });
 
-      queryClient.invalidateQueries({ queryKey: ['transcripts'] });
-      queryClient.invalidateQueries({ queryKey: ['creator-videos'] });
+      queryClient.invalidateQueries({
+  queryKey: ['transcripts'],
+  refetchType: 'all',
+});
+queryClient.invalidateQueries({
+  queryKey: ['creator-videos'],
+  refetchType: 'all',
+});
 
       setIsRunning(false);
       setProgress(null);
