@@ -22,6 +22,20 @@ export async function fetchCreatorVideos(
   return response.data;
 }
 
+export async function fetchDynamicVideos(
+  uid: string,
+  limit: number = 100,
+): Promise<ListVideosResponse> {
+  assertBackendConfigured();
+  const client = createApiClient();
+  const response = await client.post<ListVideosResponse>(
+    '/videos/dynamic',
+    { uid, limit },
+    { timeout: 180000 },
+  );
+  return response.data;
+}
+
 export async function fetchVideoTitles(
   platform: ListVideosRequest['platform'],
   videos: TitleFetchItem[],
