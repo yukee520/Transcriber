@@ -6,6 +6,7 @@ export const PLATFORMS: PlatformMeta[] = [
   { id: 'instagram', label: 'Instagram', color: '#E1306C', icon: 'logo-instagram' },
   { id: 'twitter', label: 'X', color: '#0F172A', icon: 'logo-twitter' },
   { id: 'facebook', label: 'Facebook', color: '#1877F2', icon: 'logo-facebook' },
+  { id: 'bilibili', label: 'Bilibili', color: '#00A1D6', icon: 'tv-outline' },
   { id: 'other', label: 'Other', color: '#64748B', icon: 'globe-outline' },
 ];
 
@@ -32,6 +33,13 @@ export function detectPlatform(input: string): Platform {
   if (value.includes('tiktok.com')) return 'tiktok';
   if (value.includes('instagram.com')) return 'instagram';
   if (
+    value.includes('bilibili.com') ||
+    value.includes('b23.tv') ||
+    value.includes('bilibili.tv')
+  ) {
+    return 'bilibili';
+  }
+  if (
     value.includes('twitter.com') ||
     value.includes('x.com') ||
     value.startsWith('@')
@@ -57,13 +65,22 @@ export function parseUsername(input: string): string {
     if (segments.length === 0) return '';
 
     const platform = detectPlatform(value);
+
+    if (platform === 'bilibili') {
+      const match = url.pathname.match(/^\/(\d+)/);
+      if (match) return match[1];
+      if (segments[0]) return segments[0];
+    }
+
     if (platform === 'tiktok' && segments[0].startsWith('@')) {
       return segments[0].replace(/^@/, '');
     }
+
     if (platform === 'twitter' && segments[0]) {
       const reserved = ['i', 'home', 'explore', 'notifications', 'messages'];
       if (!reserved.includes(segments[0])) return segments[0].replace(/^@/, '');
     }
+
     return segments[0].replace(/^@/, '');
   } catch {
     return value.replace(/^@/, '');
@@ -83,6 +100,8 @@ export function buildProfileUrl(platform: Platform, username: string): string {
       return `https://x.com/${handle}`;
     case 'facebook':
       return `https://www.facebook.com/${handle}`;
+    case 'bilibili':
+      return `https://space.bilibili.com/${handle}`;
     default:
       return handle.startsWith('http') ? handle : `https://${handle}`;
   }
