@@ -59,15 +59,17 @@ export default function CreatorVideosScreen() {
     enabled: Boolean(creator) && isBackendConfigured,
   });
 
-  const savedVideoIds = useTranscriptsStore((s) => {
+  const transcripts = useTranscriptsStore((s) => s.transcripts);
+
+  const savedVideoIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const t of s.transcripts) {
+    for (const t of transcripts) {
       if (t.creatorId === creatorId && t.videoId) {
         ids.add(t.videoId);
       }
     }
     return ids;
-  });
+  }, [transcripts, creatorId]);
 
   const { isRunning, progress, run } = useTranscribeSelected();
 
@@ -113,10 +115,15 @@ export default function CreatorVideosScreen() {
     [savedVideoIds, selected, isRunning, toggle],
   );
 
+  const handleBack = useCallback(() => {
+    if (isRunning) return;
+    navigation.goBack();
+  }, [isRunning, navigation]);
+
   if (!creator) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
-        <ScreenHeader title="Videos" showBack />
+        <ScreenHeader title="Videos" showBack onBack={handleBack} />
         <ErrorState
           title="Creator not found"
           message="This creator may have been removed."
@@ -128,7 +135,7 @@ export default function CreatorVideosScreen() {
   if (!isBackendConfigured) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
-        <ScreenHeader title={creator.name} showBack />
+        <ScreenHeader title={creator.name} showBack onBack={handleBack} />
         <EmptyState
           icon="cloud-offline-outline"
           title="Backend not configured"
@@ -143,7 +150,7 @@ export default function CreatorVideosScreen() {
   if (isLoading) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
-        <ScreenHeader title={creator.name} showBack />
+        <ScreenHeader title={creator.name} showBack onBack={handleBack} />
         <LoadingSpinner fullScreen label="Loading videos…" />
       </SafeAreaView>
     );
@@ -152,9 +159,9 @@ export default function CreatorVideosScreen() {
   if (isError) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
-        <ScreenHeader title={creator.name} showBack />
+        <ScreenHeader title={creator.name} showBack onBack={handleBack} />
         <ErrorState
-          message={error?.message ?? 'Could not load this creator\'s videos.'}
+          message={error?.message ?? "Could not load this creator's videos."}
           onRetry={refetch}
         />
       </SafeAreaView>
@@ -175,12 +182,18 @@ export default function CreatorVideosScreen() {
             : `${videos.length} recent · ${selectableCount} new`
         }
         showBack
+        onBack={handleBack}
       />
 
       <FlatList
         data={videos}
         keyExtractor={(item) => item.videoId}
         renderItem={renderItem}
+        extraData={savedVideoIds}
+        removeClippedSubviews
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={5}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
