@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Platform } from '@/types/creator';
 import type { BackendVideo, TitleFetchItem, VideoTitle } from '@/types/api';
 import { fetchVideoTitles } from '@/api/videos';
@@ -102,7 +102,6 @@ export function useVideoTitles({
           } catch (err) {
             if (cancelled) return;
             const apiError = toApiError(err);
-            // Titles are best-effort; keep the list usable even if a batch fails.
             if (__DEV__) {
               console.warn('[useVideoTitles] batch failed:', apiError.message);
             }
@@ -135,13 +134,3 @@ export function useVideoTitles({
 
   return { titleFor, hasTitle, isLoading, pendingCount };
 }
-
-export function useClearVideoTitlesCache() {
-  const queryClient = useQueryClient();
-  return () => {
-    queryClient.removeQueries({ queryKey: [TITLES_KEY] });
-  };
-}
-
-const _useQueryUnused = useQuery;
-void _useQueryUnused;
