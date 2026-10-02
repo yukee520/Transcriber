@@ -36,7 +36,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ---- Print the URL for the phone's LAN IP ----
-LAN_IP="$(ip -4 addr show 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | grep -v '^127\.' | head -n1 || true)"
+LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet ' | grep -v 127.0.0.1 | awk '{print $2}' | head -n1 || true)"
+if [ -z "${LAN_IP:-}" ]; then
+  LAN_IP="$(ip -4 addr show 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | grep -v '^127\.' | head -n1 || true)"
+fi
 if [ -z "${LAN_IP:-}" ]; then
   LAN_IP="<phone-lan-ip>"
 fi
