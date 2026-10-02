@@ -36,7 +36,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("transcriber-api")
 
-app = FastAPI(title="Transcriber API", version="1.2.0")
+app = FastAPI(title="Transcriber API", version="1.3.0")
 
 
 class ValidateCreatorRequest(BaseModel):
@@ -160,7 +160,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "service": "transcriber-api",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "auth_required": bool(API_KEY),
         "default_model": DEFAULT_MODEL,
     }
