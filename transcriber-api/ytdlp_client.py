@@ -128,17 +128,14 @@ def list_creator_videos(
     url = _normalize_platform_url(platform, username)
 
     args = [
+        "--flat-playlist",
         "--playlist-end",
         str(limit),
         "--dump-json",
         "--skip-download",
         "--no-warnings",
+        url,
     ]
-
-    if platform != "bilibili":
-        args.insert(0, "--flat-playlist")
-
-    args.append(url)
 
     result = _run_ytdlp(args, VIDEOS_LIST_TIMEOUT_SECONDS)
 
@@ -156,10 +153,15 @@ def list_creator_videos(
             continue
 
         video_id = str(data.get("id") or "")
-        title = str(data.get("title") or "Untitled")
+        title = str(data.get("title") or "").strip()
         video_url = str(data.get("webpage_url") or data.get("url") or "")
-        if not video_id or not video_url:
+        if not video_id:
             continue
+        if not video_url:
+            if platform == "bilibili":
+                video_url = f"https://www.bilibili.com/video/{video_id}"
+            else:
+                continue
 
         thumbnails = data.get("thumbnails") or []
         thumbnail_url = None
@@ -199,6 +201,7 @@ def list_creator_videos(
 def validate_creator(platform: str, username: str) -> CreatorInfo:
     url = _normalize_platform_url(platform, username)
     args = [
+        "--flat-playlist",
         "--playlist-end",
         "1",
         "--dump-single-json",
@@ -206,9 +209,6 @@ def validate_creator(platform: str, username: str) -> CreatorInfo:
         "--no-warnings",
         url,
     ]
-
-    if platform != "bilibili":
-        args.insert(0, "--flat-playlist")
 
     try:
         result = _run_ytdlp(args, VALIDATE_TIMEOUT_SECONDS)
