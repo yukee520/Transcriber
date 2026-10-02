@@ -4,6 +4,9 @@ import type {
   ListVideosResponse,
   TranscribeRequest,
   TranscribeResponse,
+  TranscribeStartRequest,
+  TranscribeStartResponse,
+  TranscribeStatusResponse,
 } from '@/types/api';
 
 export async function fetchCreatorVideos(
@@ -32,7 +35,47 @@ export async function requestTranscription(
       videoId: request.videoId,
       language: request.language,
     },
-    { timeout: 180000 },
+    { timeout: 1800000 },
   );
+  return response.data;
+}
+
+export async function startTranscription(
+  request: TranscribeStartRequest,
+): Promise<TranscribeStartResponse> {
+  assertBackendConfigured();
+  const client = createApiClient();
+
+  const body: TranscribeStartRequest = {
+    platform: request.platform,
+    videoUrl: request.videoUrl,
+    videoId: request.videoId,
+    language: request.language,
+  };
+
+  if (request.model) {
+    body.model = request.model;
+  }
+
+  const response = await client.post<TranscribeStartResponse>(
+    '/transcribe/start',
+    body,
+    { timeout: 30000 },
+  );
+
+  return response.data;
+}
+
+export async function getTranscriptionStatus(
+  jobId: string,
+): Promise<TranscribeStatusResponse> {
+  assertBackendConfigured();
+  const client = createApiClient();
+
+  const response = await client.get<TranscribeStatusResponse>(
+    `/transcribe/status/${encodeURIComponent(jobId)}`,
+    { timeout: 30000 },
+  );
+
   return response.data;
 }
