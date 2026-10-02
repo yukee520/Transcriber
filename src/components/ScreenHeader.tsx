@@ -32,7 +32,7 @@ export default function ScreenHeader({
     <View className="flex-row items-center px-4 py-3 border-b border-border dark:border-dark-border bg-background dark:bg-dark-background">
       {showBack ? (
         <Pressable
-          onPress={() => navigation.goBack()}
+          onPress={handleBack}
           hitSlop={10}
           accessibilityRole="button"
           accessibilityLabel="Go back"
