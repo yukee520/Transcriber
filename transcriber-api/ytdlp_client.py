@@ -1,4 +1,3 @@
-
 import json
 import logging
 import subprocess
@@ -82,12 +81,26 @@ def _classify_error(stderr: str, stdout: str) -> str:
     combined = f"{stderr}\n{stdout}".lower()
     snippet = (stderr or stdout or "").strip()
 
-    tail = ""
-    for line in reversed(snippet.splitlines()):
+    context_lines: List[str] = []
+    for line in snippet.splitlines():
         line = line.strip()
-        if line and not line.startswith("["):
-            tail = line
-            break
+        if not line:
+            continue
+        if line.startswith("["):
+            continue
+        context_lines.append(line)
+
+    tail = ""
+    if context_lines:
+        tail = context_lines[-1]
+        if tail.upper() in ("ERROR:", "ERROR", "WARNING:"):
+            tail = " | ".join(context_lines[-3:])
+        elif (
+            "error" in tail.lower()
+            and len(tail) < 15
+            and len(context_lines) > 1
+        ):
+            tail = " | ".join(context_lines[-3:])
 
     if "sign in to confirm" in combined or ("bot" in combined and "sign" in combined):
         return (
@@ -144,11 +157,21 @@ def _classify_error(stderr: str, stdout: str) -> str:
         or "cannot allocate memory" in combined
     ):
         return "The device ran out of memory. Close other apps and try again."
+    if "unable to open for writing" in combined or "permission denied" in combined:
+        return (
+            "A file permission error occurred during download. "
+            "Check that ~/transcriber-tmp/ is writable."
+        )
     if "unable to download video data" in combined:
         return (
             "yt-dlp failed to download video data. The video may be "
             "region-locked, cookies may have expired, or the source may "
             "be throttling the download."
+        )
+    if "got error" in combined and "retries" in combined:
+        return (
+            "The download was interrupted repeatedly — usually a rate limit "
+            "or connection issue. Wait 30–60 minutes and try again."
         )
     if "fragment" in combined and ("not found" in combined or "missing" in combined):
         return (
@@ -172,7 +195,7 @@ def _classify_error(stderr: str, stdout: str) -> str:
         return "TLS certificate verification failed. The source may be compromised."
 
     if tail:
-        return f"yt-dlp failed: {tail[:200]}"
+        return f"yt-dlp failed: {tail[:250]}"
     return "yt-dlp failed to fetch the requested resource."
 
 
@@ -445,6 +468,8 @@ def download_audio(
     output_template = str(dest_dir / "audio.%(ext)s")
 
     args = [
+        "-f",
+        "bestaudio",
         "-x",
         "--audio-format",
         "mp3",
@@ -455,6 +480,16 @@ def download_audio(
         "--no-cache-dir",
         "--print",
         "before_dl:%(title)s",
+        "--retries",
+        "20",
+        "--fragment-retries",
+        "20",
+        "--socket-timeout",
+        "30",
+        "--limit-rate",
+        "2M",
+        "--sleep-requests",
+        "1",
         "-o",
         output_template,
         video_url,
