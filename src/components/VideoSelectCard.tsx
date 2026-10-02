@@ -1,7 +1,7 @@
-import React from 'react';
-import { View, Text, Image, Pressable } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Image, Pressable, Animated } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import type { BackendVideo } from '@/types/api';
+import type { BackendVideo, VideoTitle } from '@/types/api';
 import { formatDuration, formatRelativeTime } from '@/utils/formatting';
 
 interface VideoSelectCardProps {
@@ -9,7 +9,39 @@ interface VideoSelectCardProps {
   selected: boolean;
   saved: boolean;
   disabled?: boolean;
+  titleLoading?: boolean;
+  resolvedTitle?: VideoTitle;
   onToggle: (videoId: string) => void;
+}
+
+function Shimmer({ width }: { width: number | `${number}%` }) {
+  const opacity = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.4,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={{ opacity, width }}
+      className="h-4 rounded bg-border dark:bg-dark-border"
+    />
+  );
 }
 
 export default function VideoSelectCard({
@@ -17,10 +49,31 @@ export default function VideoSelectCard({
   selected,
   saved,
   disabled = false,
+  titleLoading = false,
+  resolvedTitle,
   onToggle,
 }: VideoSelectCardProps) {
   const isDisabled = disabled || saved;
-  const hasTitle = video.title.trim().length > 0;
+
+  const mergedTitle =
+    (resolvedTitle?.title && resolvedTitle.title.trim().length > 0
+      ? resolvedTitle.title
+      : video.title
+    )?.trim() ?? '';
+
+  const mergedThumb =
+    resolvedTitle?.thumbnailUrl || video.thumbnailUrl || undefined;
+
+  const mergedDuration =
+    (resolvedTitle?.durationSeconds && resolvedTitle.durationSeconds > 0
+      ? resolvedTitle.durationSeconds
+      : video.durationSeconds) ?? 0;
+
+  const mergedPublished =
+    resolvedTitle?.publishedAt || video.publishedAt || '';
+
+  const hasTitle = mergedTitle.length > 0;
+  const showShimmer = titleLoading && !hasTitle;
 
   const handlePress = () => {
     if (isDisabled) return;
@@ -33,7 +86,7 @@ export default function VideoSelectCard({
       disabled={isDisabled}
       accessibilityRole="checkbox"
       accessibilityState={{ checked: selected, disabled: isDisabled }}
-      accessibilityLabel={`Video: ${hasTitle ? video.title : video.videoId}`}
+      accessibilityLabel={`Video: ${hasTitle ? mergedTitle : video.videoId}`}
       className={[
         'bg-card dark:bg-dark-card border rounded-2xl overflow-hidden',
         selected
@@ -44,35 +97,37 @@ export default function VideoSelectCard({
     >
       <View className="flex-row p-3">
         <View className="w-20 h-14 rounded-lg overflow-hidden bg-border dark:bg-dark-border items-center justify-center mr-3">
-          {video.thumbnailUrl ? (
+          {mergedThumb ? (
             <Image
-              source={{ uri: video.thumbnailUrl }}
+              source={{ uri: mergedThumb }}
               className="w-20 h-14"
               resizeMode="cover"
             />
           ) : (
             <Ionicons name="videocam-outline" size={22} color="#64748B" />
           )}
-          {video.durationSeconds > 0 ? (
+          {mergedDuration > 0 ? (
             <View className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded">
               <Text className="text-white text-[10px] font-medium">
-                {formatDuration(video.durationSeconds)}
+                {formatDuration(mergedDuration)}
               </Text>
             </View>
-          ) : (
-            <View className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded">
-              <Text className="text-white text-[10px] font-medium">video</Text>
-            </View>
-          )}
+          ) : null}
         </View>
 
         <View className="flex-1 justify-between">
-          {hasTitle ? (
+          {showShimmer ? (
+            <View className="pt-1">
+              <Shimmer width="85%" />
+              <View className="h-1" />
+              <Shimmer width="55%" />
+            </View>
+          ) : hasTitle ? (
             <Text
               numberOfLines={2}
               className="text-sm font-semibold text-text dark:text-dark-text leading-5"
             >
-              {video.title}
+              {mergedTitle}
             </Text>
           ) : (
             <View>
@@ -100,9 +155,9 @@ export default function VideoSelectCard({
                   Saved
                 </Text>
               </View>
-            ) : video.publishedAt ? (
+            ) : mergedPublished ? (
               <Text className="text-[11px] text-muted dark:text-dark-muted">
-                {formatRelativeTime(video.publishedAt)}
+                {formatRelativeTime(mergedPublished)}
               </Text>
             ) : (
               <View />
