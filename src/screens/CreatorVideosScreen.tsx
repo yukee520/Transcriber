@@ -53,6 +53,7 @@ export default function CreatorVideosScreen() {
     hasMore,
     loadMore,
     isLoadingMore,
+    source,
   } = useCreatorVideos({
     creatorId,
     platform: creator?.platform ?? 'other',
@@ -60,13 +61,19 @@ export default function CreatorVideosScreen() {
     enabled: Boolean(creator) && isBackendConfigured,
   });
 
+  const titlesEnabled = source === 'uploads';
+
   const {
     titleFor,
     isLoading: titlesLoading,
   } = useVideoTitles({
     platform: creator?.platform ?? 'other',
     videos,
-    enabled: Boolean(creator) && isBackendConfigured && videos.length > 0,
+    enabled:
+      titlesEnabled &&
+      Boolean(creator) &&
+      isBackendConfigured &&
+      videos.length > 0,
   });
 
   const transcripts = useTranscriptsStore((s) => s.transcripts);
@@ -111,7 +118,8 @@ export default function CreatorVideosScreen() {
       const isSaved = savedVideoIds.has(item.videoId);
       const isSelected = selected.has(item.videoId);
       const resolved = titleFor(item.videoId);
-      const isTitlePending = titlesLoading && !resolved && !item.title;
+      const isTitlePending =
+        titlesEnabled && titlesLoading && !resolved && !item.title;
 
       return (
         <View className="mb-3">
@@ -127,7 +135,15 @@ export default function CreatorVideosScreen() {
         </View>
       );
     },
-    [savedVideoIds, selected, isRunning, toggle, titleFor, titlesLoading],
+    [
+      savedVideoIds,
+      selected,
+      isRunning,
+      toggle,
+      titleFor,
+      titlesLoading,
+      titlesEnabled,
+    ],
   );
 
   const handleBack = useCallback(() => {
@@ -166,7 +182,10 @@ export default function CreatorVideosScreen() {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
         <ScreenHeader title={creator.name} showBack onBack={handleBack} />
-        <LoadingSpinner fullScreen label="Loading videos…" />
+        <LoadingSpinner
+          fullScreen
+          label={source === 'dynamic' ? 'Loading posts…' : 'Loading videos…'}
+        />
       </SafeAreaView>
     );
   }
@@ -187,8 +206,28 @@ export default function CreatorVideosScreen() {
     (v) => !savedVideoIds.has(v.videoId),
   ).length;
 
+  const subtitle =
+    videos.length === 0
+      ? source === 'dynamic'
+        ? 'Dynamic posts'
+        : 'Recent videos'
+      : source === 'dynamic'
+        ? `${videos.length} posts · ${selectableCount} new`
+        : `${videos.length} loaded · ${selectableCount} new`;
+
   const renderFooter = () => {
     if (videos.length === 0) return null;
+
+    if (source === 'dynamic') {
+      return (
+        <View className="py-4 items-center">
+          <Text className="text-xs text-muted dark:text-dark-muted">
+            {videos.length} {videos.length === 1 ? 'post' : 'posts'} loaded from
+            the dynamic feed
+          </Text>
+        </View>
+      );
+    }
 
     if (isLoadingMore) {
       return (
@@ -229,11 +268,7 @@ export default function CreatorVideosScreen() {
     <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
       <ScreenHeader
         title={creator.name}
-        subtitle={
-          videos.length === 0
-            ? 'Recent videos'
-            : `${videos.length} loaded · ${selectableCount} new`
-        }
+        subtitle={subtitle}
         showBack
         onBack={handleBack}
       />
