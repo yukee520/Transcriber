@@ -277,10 +277,13 @@ def videos_dynamic(payload: DynamicVideosRequest) -> DynamicVideosResponse:
     if not payload.uid.strip():
         raise HTTPException(status_code=400, detail="uid is required")
 
+    start_offset = (payload.offset or "").strip()
+
     try:
-        entries = fetch_dynamic_videos(
+        result = fetch_dynamic_videos(
             uid=payload.uid.strip(),
             limit=payload.limit,
+            start_offset=start_offset,
         )
     except BilibiliDynamicError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -301,8 +304,10 @@ def videos_dynamic(payload: DynamicVideosRequest) -> DynamicVideosResponse:
                 durationSeconds=v.duration_seconds,
                 publishedAt=v.published_at,
             )
-            for v in entries
-        ]
+            for v in result.videos
+        ],
+        nextOffset=result.next_offset,
+        hasMore=result.has_more,
     )
 
 
