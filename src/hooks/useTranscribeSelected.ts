@@ -4,7 +4,10 @@ import Toast from 'react-native-toast-message';
 import type { BackendVideo } from '@/types/api';
 import type { Creator } from '@/types/creator';
 import type { Transcript, TranscriptSegment } from '@/types/transcript';
-import { requestTranscription } from '@/api/transcripts';
+import {
+  getTranscriptionStatus,
+  startTranscription,
+} from '@/api/transcripts';
 import { toApiError } from '@/api/client';
 import { useTranscriptsStore } from '@/store/useTranscriptsStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
@@ -12,10 +15,15 @@ import { generateTranscriptId } from '@/utils/id';
 import { saveTranscriptFile } from '@/utils/storage';
 import { estimateWordCount } from '@/utils/formatting';
 
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 60 * 60 * 1000;
+
 export interface TranscribeProgress {
   current: number;
   total: number;
   currentTitle: string;
+  currentPhase: string;
+  currentPercent: number;
 }
 
 export interface TranscribeSelectedResult {
@@ -53,6 +61,25 @@ function resolveTitle(video: BackendVideo, fromServer?: string | null): string {
   return video.videoId;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function phaseLabel(phase?: string | null): string {
+  switch (phase) {
+    case 'queued':
+      return 'Queued…';
+    case 'download':
+      return 'Downloading…';
+    case 'transcribe':
+      return 'Transcribing…';
+    case 'done':
+      return 'Done';
+    default:
+      return 'Working…';
+  }
+}
+
 export function useTranscribeSelected(): UseTranscribeSelectedResult {
   const queryClient = useQueryClient();
   const [isRunning, setIsRunning] = useState(false);
@@ -75,6 +102,8 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
         current: 0,
         total: videos.length,
         currentTitle: videos[0].title || videos[0].videoId,
+        currentPhase: 'Queued…',
+        currentPercent: 0,
       });
 
       let succeeded = 0;
@@ -89,6 +118,8 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
           current: i,
           total: videos.length,
           currentTitle: workingTitle,
+          currentPhase: 'Queued…',
+          currentPercent: 0,
         });
 
         const id = generateTranscriptId();
@@ -117,26 +148,71 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
         transcriptsStore.upsert(base);
 
         try {
-          const result = await requestTranscription({
+          const startRes = await startTranscription({
             platform: creator.platform,
             videoUrl: video.url,
             videoId: video.videoId,
             language: settings.defaultLanguage,
           });
 
-          const serverTitle = result.title ?? null;
+          const jobId = startRes.jobId;
+          const deadline = Date.now() + POLL_TIMEOUT_MS;
+          let finalStatus: Awaited<
+            ReturnType<typeof getTranscriptionStatus>
+          > | null = null;
+
+          while (Date.now() < deadline) {
+            await sleep(POLL_INTERVAL_MS);
+
+            let statusRes;
+            try {
+              statusRes = await getTranscriptionStatus(jobId);
+            } catch (pollErr) {
+              // Transient poll failures are tolerated; we keep trying.
+              if (__DEV__) {
+                console.warn('[transcribe] poll failed', pollErr);
+              }
+              continue;
+            }
+
+            setProgress({
+              current: i,
+              total: videos.length,
+              currentTitle: workingTitle,
+              currentPhase: phaseLabel(statusRes.phase ?? statusRes.status),
+              currentPercent: Math.max(0, Math.min(100, statusRes.progress ?? 0)),
+            });
+
+            if (statusRes.status === 'done') {
+              finalStatus = statusRes;
+              break;
+            }
+
+            if (statusRes.status === 'failed') {
+              throw new Error(statusRes.error || 'Transcription failed');
+            }
+          }
+
+          if (finalStatus === null || finalStatus.status !== 'done') {
+            throw new Error('Transcription timed out');
+          }
+
+          const serverTitle = finalStatus.title ?? null;
           const finalTitle = resolveTitle(video, serverTitle);
 
-          const text = result.text?.trim() || segmentsToText(result.segments);
+          const segments = finalStatus.segments ?? [];
+          const text =
+            (finalStatus.text ?? '').trim() || segmentsToText(segments);
           const wordCount = estimateWordCount(text);
 
           const completed: Transcript = {
             ...base,
             videoTitle: finalTitle,
-            language: result.language || base.language,
-            durationSeconds: result.durationSeconds || base.durationSeconds,
+            language: finalStatus.language || base.language,
+            durationSeconds:
+              finalStatus.durationSeconds || base.durationSeconds,
             text,
-            segments: result.segments ?? [],
+            segments,
             wordCount,
             status: 'completed',
             updatedAt: new Date().toISOString(),
@@ -172,16 +248,18 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
         current: videos.length,
         total: videos.length,
         currentTitle: '',
+        currentPhase: 'Done',
+        currentPercent: 100,
       });
 
       queryClient.invalidateQueries({
-  queryKey: ['transcripts'],
-  refetchType: 'all',
-});
-queryClient.invalidateQueries({
-  queryKey: ['creator-videos'],
-  refetchType: 'all',
-});
+        queryKey: ['transcripts'],
+        refetchType: 'all',
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['creator-videos'],
+        refetchType: 'all',
+      });
 
       setIsRunning(false);
       setProgress(null);
