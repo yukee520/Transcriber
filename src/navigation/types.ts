@@ -12,6 +12,7 @@ export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   TranscriptDetail: { transcriptId: string };
   CreatorDetail: { creatorId: string };
+  CreatorVideos: { creatorId: string };
   AddCreator: undefined;
   Settings: undefined;
 };
