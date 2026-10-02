@@ -1,4 +1,3 @@
-
 import type { Platform } from './creator';
 import type { TranscriptSegment } from './transcript';
 
@@ -70,6 +69,47 @@ export interface TranscribeResponse {
   title?: string | null;
   text: string;
   segments: TranscriptSegment[];
+}
+
+export interface TranscribeStartRequest {
+  platform: Platform;
+  videoUrl: string;
+  videoId: string;
+  language: string;
+  model?: string;
+}
+
+export interface TranscribeStartResponse {
+  jobId: string;
+  status: string;
+}
+
+export type TranscribeJobPhase =
+  | 'queued'
+  | 'download'
+  | 'transcribe'
+  | 'done';
+
+export type TranscribeJobStatusValue =
+  | 'queued'
+  | 'running'
+  | 'done'
+  | 'failed';
+
+export interface TranscribeStatusResponse {
+  jobId: string;
+  status: TranscribeJobStatusValue;
+  phase?: TranscribeJobPhase | null;
+  progress: number;
+  message?: string | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
+  language?: string | null;
+  durationSeconds?: number | null;
+  title?: string | null;
+  text?: string | null;
+  segments?: TranscriptSegment[] | null;
+  error?: string | null;
 }
 
 export interface ValidateCreatorRequest {
