@@ -14,10 +14,34 @@ export interface ListVideosRequest {
   platform: Platform;
   username: string;
   limit?: number;
+  startIndex?: number;
 }
 
 export interface ListVideosResponse {
   videos: BackendVideo[];
+}
+
+export interface TitleFetchItem {
+  videoId: string;
+  url: string;
+}
+
+export interface FetchTitlesRequest {
+  platform: Platform;
+  videos: TitleFetchItem[];
+}
+
+export interface VideoTitle {
+  videoId: string;
+  title: string;
+  thumbnailUrl?: string | null;
+  durationSeconds: number;
+  publishedAt: string;
+  error?: string | null;
+}
+
+export interface FetchTitlesResponse {
+  titles: VideoTitle[];
 }
 
 export interface TranscribeRequest {
@@ -30,6 +54,7 @@ export interface TranscribeRequest {
 export interface TranscribeResponse {
   language: string;
   durationSeconds: number;
+  title?: string | null;
   text: string;
   segments: TranscriptSegment[];
 }
