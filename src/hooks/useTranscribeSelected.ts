@@ -43,6 +43,16 @@ function segmentsToText(segments: TranscriptSegment[]): string {
     .trim();
 }
 
+function resolveTitle(video: BackendVideo, fromServer?: string | null): string {
+  if (fromServer && fromServer.trim().length > 0) {
+    return fromServer.trim();
+  }
+  if (video.title && video.title.trim().length > 0) {
+    return video.title.trim();
+  }
+  return video.videoId;
+}
+
 export function useTranscribeSelected(): UseTranscribeSelectedResult {
   const queryClient = useQueryClient();
   const [isRunning, setIsRunning] = useState(false);
@@ -64,7 +74,7 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
       setProgress({
         current: 0,
         total: videos.length,
-        currentTitle: videos[0].title,
+        currentTitle: videos[0].title || videos[0].videoId,
       });
 
       let succeeded = 0;
@@ -73,11 +83,12 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
 
       for (let i = 0; i < videos.length; i += 1) {
         const video = videos[i];
+        const workingTitle = resolveTitle(video);
 
         setProgress({
           current: i,
           total: videos.length,
-          currentTitle: video.title || video.videoId,
+          currentTitle: workingTitle,
         });
 
         const id = generateTranscriptId();
@@ -91,7 +102,7 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
           platform: creator.platform,
           videoId: video.videoId,
           videoUrl: video.url,
-          videoTitle: video.title || video.videoId,
+          videoTitle: workingTitle,
           thumbnailUrl: video.thumbnailUrl ?? undefined,
           durationSeconds: video.durationSeconds ?? 0,
           language: settings.defaultLanguage,
@@ -113,11 +124,15 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
             language: settings.defaultLanguage,
           });
 
+          const serverTitle = result.title ?? null;
+          const finalTitle = resolveTitle(video, serverTitle);
+
           const text = result.text?.trim() || segmentsToText(result.segments);
           const wordCount = estimateWordCount(text);
 
           const completed: Transcript = {
             ...base,
+            videoTitle: finalTitle,
             language: result.language || base.language,
             durationSeconds: result.durationSeconds || base.durationSeconds,
             text,
@@ -141,7 +156,7 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
         } catch (err) {
           const apiError = toApiError(err);
           const message = apiError.message || 'Transcription failed';
-          errors.push(`${video.title || video.videoId}: ${message}`);
+          errors.push(`${workingTitle}: ${message}`);
 
           transcriptsStore.upsert({
             ...base,
