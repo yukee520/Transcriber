@@ -1,3 +1,4 @@
+
 import json
 import logging
 import subprocess
@@ -79,6 +80,14 @@ def _run_ytdlp(args: List[str], timeout: int) -> subprocess.CompletedProcess:
 
 def _classify_error(stderr: str, stdout: str) -> str:
     combined = f"{stderr}\n{stdout}".lower()
+    snippet = (stderr or stdout or "").strip()
+
+    tail = ""
+    for line in reversed(snippet.splitlines()):
+        line = line.strip()
+        if line and not line.startswith("["):
+            tail = line
+            break
 
     if "sign in to confirm" in combined or ("bot" in combined and "sign" in combined):
         return (
@@ -95,13 +104,28 @@ def _classify_error(stderr: str, stdout: str) -> str:
             "The platform refused the download (HTTP 403). "
             "An updated yt-dlp or fresh cookies may be required."
         )
+    if "http error 404" in combined:
+        return "The video or creator could not be found (HTTP 404)."
+    if (
+        "http error 500" in combined
+        or "http error 502" in combined
+        or "http error 503" in combined
+    ):
+        return (
+            "The platform returned a server error. This is usually temporary — "
+            "retry in a few minutes."
+        )
     if "video unavailable" in combined or "video is unavailable" in combined:
         return "The video is unavailable or has been removed."
     if "private video" in combined:
         return "The video is private."
-    if "members-only" in combined or "premium" in combined:
+    if (
+        "members-only" in combined
+        or "premium" in combined
+        or ("pay" in combined and "subscri" in combined)
+    ):
         return "This video requires a paid account and cannot be downloaded."
-    if "geo" in combined and "block" in combined:
+    if "geo" in combined and ("block" in combined or "restrict" in combined):
         return "The video is geo-blocked in your region."
     if "not found" in combined or "404" in combined:
         return "The creator or video could not be found."
@@ -109,8 +133,46 @@ def _classify_error(stderr: str, stdout: str) -> str:
         return "This URL is not supported by the downloader."
     if "unable to extract" in combined:
         return "yt-dlp could not parse this page. Try updating yt-dlp."
-    if "timed out" in combined:
-        return "The download timed out. Try again."
+    if "no space left on device" in combined or "disk full" in combined or "enospc" in combined:
+        return (
+            "Not enough storage on the device. Free up space (check "
+            "~/transcriber-tmp/ and /sdcard/Download/) and try again."
+        )
+    if (
+        "out of memory" in combined
+        or "memoryerror" in combined
+        or "cannot allocate memory" in combined
+    ):
+        return "The device ran out of memory. Close other apps and try again."
+    if "unable to download video data" in combined:
+        return (
+            "yt-dlp failed to download video data. The video may be "
+            "region-locked, cookies may have expired, or the source may "
+            "be throttling the download."
+        )
+    if "fragment" in combined and ("not found" in combined or "missing" in combined):
+        return (
+            "Some video fragments are missing from the source. The video "
+            "may be partially corrupted or inaccessible."
+        )
+    if "read timed out" in combined or "timed out" in combined or "timeout" in combined:
+        return (
+            "The download timed out. Retry, or increase DOWNLOAD_TIMEOUT "
+            "in run.sh."
+        )
+    if (
+        "connection reset" in combined
+        or "connection refused" in combined
+        or "connection aborted" in combined
+    ):
+        return "Network connection failed. Check your internet and retry."
+    if "ssl" in combined and "error" in combined:
+        return "SSL/TLS error during download. Check your network and retry."
+    if "certificate" in combined and "verify" in combined:
+        return "TLS certificate verification failed. The source may be compromised."
+
+    if tail:
+        return f"yt-dlp failed: {tail[:200]}"
     return "yt-dlp failed to fetch the requested resource."
 
 
@@ -150,7 +212,9 @@ def _build_video_url(platform: str, video_id: str) -> str:
 
 def _parse_published(upload_date: str) -> str:
     if upload_date and len(upload_date) == 8:
-        return f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}T00:00:00.000Z"
+        return (
+            f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}T00:00:00.000Z"
+        )
     return upload_date or ""
 
 
@@ -236,7 +300,6 @@ def fetch_title_for_video(
 ) -> VideoDetails:
     video_id = ""
     try:
-        # Cheap trick: extract id from url tail
         tail = video_url.rstrip("/").split("/")[-1]
         if "watch?v=" in video_url:
             tail = video_url.split("watch?v=")[-1].split("&")[0]
@@ -294,7 +357,6 @@ def fetch_titles_batch(
     items: List[Tuple[str, str]],
     timeout: int = TITLES_TIMEOUT_SECONDS,
 ) -> Dict[str, VideoDetails]:
-    """items: list of (videoId, videoUrl). Returns videoId -> VideoDetails."""
     results: Dict[str, VideoDetails] = {}
 
     if not items:
@@ -306,10 +368,7 @@ def fetch_titles_batch(
 
     workers = max(1, min(TITLE_PARALLELISM, len(items)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {
-            executor.submit(work, item): item[0]
-            for item in items
-        }
+        future_map = {executor.submit(work, item): item[0] for item in items}
         for future in as_completed(future_map):
             req_id = future_map[future]
             try:
@@ -343,28 +402,24 @@ def validate_creator(platform: str, username: str) -> CreatorInfo:
     try:
         result = _run_ytdlp(args, VALIDATE_TIMEOUT_SECONDS)
     except YtdlpError as exc:
-        return CreatorInfo(valid=False, name=None, avatar_url=None, error_message=str(exc))
+        return CreatorInfo(
+            valid=False, name=None, avatar_url=None, error_message=str(exc)
+        )
 
     if result.returncode != 0 or not result.stdout.strip():
         message = _classify_error(result.stderr, result.stdout)
-        return CreatorInfo(valid=False, name=None, avatar_url=None, error_message=message)
+        return CreatorInfo(
+            valid=False, name=None, avatar_url=None, error_message=message
+        )
 
     try:
         data = json.loads(result.stdout.strip().splitlines()[0])
     except (json.JSONDecodeError, IndexError):
         data = {}
 
-    # Only trust a channel name that looks like a real display name.
-    # yt-dlp's flat extraction often returns the numeric UID for Bilibili,
-    # which is not useful as a display name.
-    name = (
-        data.get("channel")
-        or data.get("uploader")
-        or ""
-    )
+    name = data.get("channel") or data.get("uploader") or ""
     name = str(name).strip() if name else ""
 
-    # Reject pure-numeric names (Bilibili UIDs) and clearly placeholder values.
     if name:
         digits_only = name.lstrip("@").isdigit()
         if digits_only or name.lower() in ("unknown", "n/a", "null", "none"):
@@ -408,7 +463,9 @@ def download_audio(
     started = time.monotonic()
     result = _run_ytdlp(args, timeout_seconds)
     elapsed = time.monotonic() - started
-    logger.info("yt-dlp download finished in %.1fs (exit %s)", elapsed, result.returncode)
+    logger.info(
+        "yt-dlp download finished in %.1fs (exit %s)", elapsed, result.returncode
+    )
 
     if result.returncode != 0:
         message = _classify_error(result.stderr, result.stdout)
