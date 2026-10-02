@@ -97,10 +97,13 @@ class TitlesResponse(BaseModel):
 class DynamicVideosRequest(BaseModel):
     uid: str = Field(..., min_length=1)
     limit: int = Field(default=100, ge=1, le=500)
+    offset: Optional[str] = None
 
 
 class DynamicVideosResponse(BaseModel):
     videos: list[VideoItem]
+    nextOffset: Optional[str] = None
+    hasMore: bool = False
 
 
 class TranscribeRequest(BaseModel):
