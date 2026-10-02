@@ -1,16 +1,18 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Platform } from '@/types/creator';
 import type { BackendVideo } from '@/types/api';
 import { fetchCreatorVideos } from '@/api/videos';
 import { toApiError } from '@/api/client';
 
 const CREATOR_VIDEOS_KEY = 'creator-videos';
+const PAGE_SIZE = 25;
+const INITIAL_PAGE_SIZE = 50;
 
 interface UseCreatorVideosParams {
   creatorId: string;
   platform: Platform;
   username: string;
-  limit?: number;
   enabled?: boolean;
 }
 
@@ -21,28 +23,47 @@ interface UseCreatorVideosResult {
   error: Error | null;
   refetch: () => void;
   isRefetching: boolean;
+  hasMore: boolean;
+  loadMore: () => void;
+  isLoadingMore: boolean;
+}
+
+interface PageResult {
+  videos: BackendVideo[];
+  nextStartIndex: number | null;
 }
 
 export function useCreatorVideos({
   creatorId,
   platform,
   username,
-  limit = 25,
   enabled = true,
 }: UseCreatorVideosParams): UseCreatorVideosResult {
-  const query = useQuery<BackendVideo[], Error>({
-    queryKey: [CREATOR_VIDEOS_KEY, creatorId, limit],
+  const query = useInfiniteQuery<PageResult, Error>({
+    queryKey: [CREATOR_VIDEOS_KEY, creatorId, platform, username],
     enabled: enabled && username.trim().length > 0,
     staleTime: 1000 * 60 * 60,
     retry: 0,
-    queryFn: async () => {
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextStartIndex ?? undefined,
+    queryFn: async ({ pageParam }) => {
+      const startIndex = typeof pageParam === 'number' ? pageParam : 0;
+      const isFirstPage = startIndex === 0;
+      const limit = isFirstPage ? INITIAL_PAGE_SIZE : PAGE_SIZE;
+
       try {
         const response = await fetchCreatorVideos({
           platform,
           username,
           limit,
+          startIndex,
         });
-        return response.videos;
+        const returned = response.videos.length;
+        const reachedEnd = returned < limit;
+        return {
+          videos: response.videos,
+          nextStartIndex: reachedEnd ? null : startIndex + returned,
+        };
       } catch (err) {
         const apiError = toApiError(err);
         throw new Error(apiError.message);
@@ -50,14 +71,35 @@ export function useCreatorVideos({
     },
   });
 
+  const videos = useMemo(() => {
+    const pages = query.data?.pages ?? [];
+    const seen = new Set<string>();
+    const merged: BackendVideo[] = [];
+    for (const page of pages) {
+      for (const v of page.videos) {
+        if (!v.videoId || seen.has(v.videoId)) continue;
+        seen.add(v.videoId);
+        merged.push(v);
+      }
+    }
+    return merged;
+  }, [query.data]);
+
   return {
-    videos: query.data ?? [],
+    videos,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error ?? null,
     refetch: () => {
       void query.refetch();
     },
-    isRefetching: query.isRefetching,
+    isRefetching: query.isRefetching && !query.isFetchingNextPage,
+    hasMore: query.hasNextPage ?? false,
+    loadMore: () => {
+      if (query.hasNextPage && !query.isFetchingNextPage) {
+        void query.fetchNextPage();
+      }
+    },
+    isLoadingMore: query.isFetchingNextPage,
   };
 }
