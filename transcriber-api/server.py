@@ -1,8 +1,10 @@
 import logging
 import shutil
+import threading
+import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -16,6 +18,7 @@ from config import (
     MAX_VIDEOS_PER_LIST,
     TITLES_MAX_BATCH,
     TMP_ROOT,
+    TRANSCRIBE_TIMEOUT_SECONDS,
     ensure_dirs,
     model_exists,
 )
@@ -36,7 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("transcriber-api")
 
-app = FastAPI(title="Transcriber API", version="1.3.0")
+app = FastAPI(title="Transcriber API", version="1.4.0")
+
+JOBS: Dict[str, Dict[str, Any]] = {}
+JOBS_LOCK = threading.Lock()
+JOB_MAX_AGE_SECONDS = 60 * 60 * 24
 
 
 class ValidateCreatorRequest(BaseModel):
@@ -128,6 +135,35 @@ class TranscribeResponse(BaseModel):
     segments: list[SegmentItem]
 
 
+class TranscribeStartRequest(BaseModel):
+    platform: str
+    videoUrl: str
+    videoId: str
+    language: str = "auto"
+    model: Optional[str] = None
+
+
+class TranscribeStartResponse(BaseModel):
+    jobId: str
+    status: str
+
+
+class TranscribeStatusResponse(BaseModel):
+    jobId: str
+    status: str
+    phase: Optional[str] = None
+    progress: float = 0.0
+    message: Optional[str] = None
+    startedAt: Optional[float] = None
+    finishedAt: Optional[float] = None
+    language: Optional[str] = None
+    durationSeconds: Optional[float] = None
+    title: Optional[str] = None
+    text: Optional[str] = None
+    segments: Optional[list[SegmentItem]] = None
+    error: Optional[str] = None
+
+
 def require_api_key(authorization: Optional[str] = Header(default=None)) -> None:
     if not API_KEY:
         return
@@ -146,10 +182,220 @@ def require_api_key(authorization: Optional[str] = Header(default=None)) -> None
         )
 
 
+def _now() -> float:
+    return time.time()
+
+
+def _make_job(payload: TranscribeStartRequest) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "jobId": job_id,
+            "status": "queued",
+            "phase": "queued",
+            "progress": 0.0,
+            "message": "Queued",
+            "startedAt": None,
+            "finishedAt": None,
+            "language": None,
+            "durationSeconds": None,
+            "title": None,
+            "text": None,
+            "segments": None,
+            "error": None,
+            "request": payload.dict(),
+        }
+    return job_id
+
+
+def _update_job(job_id: str, **fields: Any) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return
+        job.update(fields)
+
+
+def _finalize_job(job_id: str, status: str, **fields: Any) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return
+        job.update(fields)
+        job["status"] = status
+        if job.get("startedAt") and not job.get("finishedAt"):
+            job["finishedAt"] = _now()
+
+
+def _purge_old_jobs() -> None:
+    cutoff = _now() - JOB_MAX_AGE_SECONDS
+    with JOBS_LOCK:
+        stale = [
+            jid
+            for jid, job in JOBS.items()
+            if (job.get("finishedAt") or job.get("startedAt") or _now()) < cutoff
+        ]
+        for jid in stale:
+            JOBS.pop(jid, None)
+
+
+def _run_job(job_id: str) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return
+        payload = dict(job.get("request") or {})
+
+    platform = str(payload.get("platform") or "")
+    video_url = str(payload.get("videoUrl") or "")
+    video_id = str(payload.get("videoId") or "")
+    language = str(payload.get("language") or "auto")
+    model_name = (payload.get("model") or DEFAULT_MODEL).strip().lower()
+
+    work_dir = TMP_ROOT / f"job-{job_id}"
+    started = _now()
+
+    _update_job(
+        job_id,
+        status="running",
+        phase="download",
+        progress=5.0,
+        message="Downloading audio…",
+        startedAt=started,
+    )
+
+    logger.info(
+        "Async job %s | platform=%s videoId=%s model=%s",
+        job_id,
+        platform,
+        video_id,
+        model_name,
+    )
+
+    try:
+        download = download_audio(
+            platform=platform,
+            video_url=video_url,
+            dest_dir=work_dir,
+        )
+    except YtdlpError as exc:
+        _cleanup(work_dir)
+        _finalize_job(
+            job_id,
+            "failed",
+            phase="download",
+            progress=0.0,
+            message="Download failed",
+            error=str(exc),
+            finishedAt=_now(),
+        )
+        logger.warning("Async job %s download failed: %s", job_id, exc)
+        return
+    except Exception as exc:
+        _cleanup(work_dir)
+        _finalize_job(
+            job_id,
+            "failed",
+            phase="download",
+            progress=0.0,
+            message="Download error",
+            error=str(exc),
+            finishedAt=_now(),
+        )
+        logger.exception("Async job %s download crashed", job_id)
+        return
+
+    _update_job(
+        job_id,
+        phase="transcribe",
+        progress=25.0,
+        message="Transcribing…",
+        title=download.title or None,
+    )
+
+    try:
+        result = run_transcription(
+            audio_path=download.audio_path,
+            language=language,
+            model=model_name,
+            timeout_seconds=TRANSCRIBE_TIMEOUT_SECONDS,
+        )
+    except WhisperError as exc:
+        _cleanup(work_dir)
+        _finalize_job(
+            job_id,
+            "failed",
+            phase="transcribe",
+            progress=25.0,
+            message="Whisper failed",
+            error=str(exc),
+            finishedAt=_now(),
+        )
+        logger.warning("Async job %s whisper failed: %s", job_id, exc)
+        return
+    except Exception as exc:
+        _cleanup(work_dir)
+        _finalize_job(
+            job_id,
+            "failed",
+            phase="transcribe",
+            progress=25.0,
+            message="Transcription error",
+            error=str(exc),
+            finishedAt=_now(),
+        )
+        logger.exception("Async job %s whisper crashed", job_id)
+        return
+
+    segments = segments_to_dicts(result.segments)
+
+    _cleanup(work_dir)
+
+    _finalize_job(
+        job_id,
+        "done",
+        phase="done",
+        progress=100.0,
+        message="Complete",
+        language=result.language,
+        durationSeconds=result.duration_seconds,
+        title=download.title or None,
+        text=result.text,
+        segments=segments,
+        finishedAt=_now(),
+    )
+
+    logger.info(
+        "Async job %s done | %d segments | %.1fs audio | title=%r",
+        job_id,
+        len(segments),
+        result.duration_seconds,
+        (download.title or "")[:60],
+    )
+
+
+def _job_public_view(job: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "jobId": job.get("jobId"),
+        "status": job.get("status"),
+        "phase": job.get("phase"),
+        "progress": float(job.get("progress") or 0.0),
+        "message": job.get("message"),
+        "startedAt": job.get("startedAt"),
+        "finishedAt": job.get("finishedAt"),
+        "language": job.get("language"),
+        "durationSeconds": job.get("durationSeconds"),
+        "title": job.get("title"),
+        "text": job.get("text"),
+        "segments": job.get("segments"),
+        "error": job.get("error"),
+    }
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_dirs()
-    logger.info("Transcriber API starting")
+    logger.info("Transcriber API starting (async-enabled)")
     logger.info("Default model: %s (exists=%s)", DEFAULT_MODEL, model_exists(DEFAULT_MODEL))
     logger.info("Auth required: %s", bool(API_KEY))
     logger.info("Temp root: %s", TMP_ROOT)
@@ -157,12 +403,17 @@ def on_startup() -> None:
 
 @app.get("/")
 def health() -> dict:
+    with JOBS_LOCK:
+        active = sum(1 for j in JOBS.values() if j.get("status") == "running")
+        queued = sum(1 for j in JOBS.values() if j.get("status") == "queued")
     return {
         "status": "ok",
         "service": "transcriber-api",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "auth_required": bool(API_KEY),
         "default_model": DEFAULT_MODEL,
+        "active_jobs": active,
+        "queued_jobs": queued,
     }
 
 
@@ -312,6 +563,69 @@ def videos_dynamic(payload: DynamicVideosRequest) -> DynamicVideosResponse:
 
 
 @app.post(
+    "/transcribe/start",
+    response_model=TranscribeStartResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def transcribe_start(payload: TranscribeStartRequest) -> TranscribeStartResponse:
+    if not payload.videoUrl.strip():
+        raise HTTPException(status_code=400, detail="videoUrl is required")
+    if not payload.videoId.strip():
+        raise HTTPException(status_code=400, detail="videoId is required")
+
+    _purge_old_jobs()
+
+    job_id = _make_job(payload)
+    thread = threading.Thread(
+        target=_run_job,
+        args=(job_id,),
+        daemon=True,
+        name=f"transcribe-{job_id}",
+    )
+    thread.start()
+
+    logger.info("Queued job %s | videoId=%s", job_id, payload.videoId)
+
+    return TranscribeStartResponse(jobId=job_id, status="queued")
+
+
+@app.get(
+    "/transcribe/status/{job_id}",
+    response_model=TranscribeStatusResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def transcribe_status(job_id: str) -> TranscribeStatusResponse:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found or expired.")
+
+    view = _job_public_view(job)
+
+    segments_raw = view.get("segments")
+    segments = None
+    if isinstance(segments_raw, list):
+        segments = [SegmentItem(**seg) for seg in segments_raw]
+
+    return TranscribeStatusResponse(
+        jobId=str(view.get("jobId") or job_id),
+        status=str(view.get("status") or "unknown"),
+        phase=view.get("phase"),
+        progress=float(view.get("progress") or 0.0),
+        message=view.get("message"),
+        startedAt=view.get("startedAt"),
+        finishedAt=view.get("finishedAt"),
+        language=view.get("language"),
+        durationSeconds=view.get("durationSeconds"),
+        title=view.get("title"),
+        text=view.get("text"),
+        segments=segments,
+        error=view.get("error"),
+    )
+
+
+@app.post(
     "/transcribe",
     response_model=TranscribeResponse,
     dependencies=[Depends(require_api_key)],
@@ -325,7 +639,7 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
     model_name = (payload.model or DEFAULT_MODEL).strip().lower()
 
     logger.info(
-        "Transcribe job %s | platform=%s videoId=%s model=%s",
+        "Sync transcribe job %s | platform=%s videoId=%s model=%s",
         request_id,
         payload.platform,
         payload.videoId,
@@ -340,11 +654,9 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
         )
     except YtdlpError as exc:
         _cleanup(work_dir)
-        logger.warning("Job %s download failed: %s", request_id, exc)
         raise HTTPException(status_code=exc.status_hint, detail=str(exc)) from exc
     except Exception as exc:
         _cleanup(work_dir)
-        logger.exception("Job %s download crashed", request_id)
         raise HTTPException(status_code=500, detail=f"Download error: {exc}") from exc
 
     try:
@@ -355,11 +667,9 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
         )
     except WhisperError as exc:
         _cleanup(work_dir)
-        logger.warning("Job %s whisper failed: %s", request_id, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _cleanup(work_dir)
-        logger.exception("Job %s whisper crashed", request_id)
         raise HTTPException(status_code=500, detail=f"Transcription error: {exc}") from exc
 
     response = TranscribeResponse(
@@ -372,11 +682,10 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
 
     _cleanup(work_dir)
     logger.info(
-        "Job %s done | %d segments | %.1fs audio | title=%r",
+        "Sync job %s done | %d segments | %.1fs audio",
         request_id,
         len(response.segments),
         response.durationSeconds,
-        (response.title or "")[:60],
     )
     return response
 
