@@ -27,7 +27,7 @@ import type { BackendVideo } from '@/types/api';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type ScreenRoute = RouteProp<RootStackParamList, 'CreatorVideos'>;
 
-const VIDEO_LIMIT = 25;
+const VIDEO_LIMIT = 10;
 
 export default function CreatorVideosScreen() {
   const navigation = useNavigation<Nav>();

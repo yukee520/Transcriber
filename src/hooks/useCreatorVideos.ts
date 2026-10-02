@@ -33,7 +33,7 @@ export function useCreatorVideos({
   const query = useQuery<BackendVideo[], Error>({
     queryKey: [CREATOR_VIDEOS_KEY, creatorId, limit],
     enabled: enabled && username.trim().length > 0,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 1000 * 60 * 60,
     retry: 0,
     queryFn: async () => {
       try {
