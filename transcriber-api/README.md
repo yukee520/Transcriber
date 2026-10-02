@@ -5,11 +5,12 @@ Local HTTP transcription backend that powers the **Transcriber** Android app. Ru
 ## What it does
 
 - `POST /creator/validate` — check that a creator exists and get their display name
-- `POST /videos/list` — list a creator's recent videos (metadata only)
+- `POST /videos/list` — list a creator's recent videos (fast, paginated)
+- `POST /videos/titles` — fetch full titles + thumbnails + durations for a batch of videos
 - `POST /transcribe` — download a video's audio, run Whisper, return the transcript with timestamps
 - `GET /` — health check
 
-All three POST endpoints require `Authorization: Bearer <API_KEY>` when `API_KEY` is set.
+All POST endpoints require `Authorization: Bearer <API_KEY>` when `API_KEY` is set.
 
 ## Requirements
 
