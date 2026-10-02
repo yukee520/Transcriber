@@ -23,11 +23,16 @@ PORT = int(os.environ.get("PORT", "8000"))
 
 TRANSCRIBE_TIMEOUT_SECONDS = int(os.environ.get("TRANSCRIBE_TIMEOUT", "900"))
 VIDEOS_LIST_TIMEOUT_SECONDS = int(os.environ.get("VIDEOS_LIST_TIMEOUT", "60"))
+TITLES_TIMEOUT_SECONDS = int(os.environ.get("TITLES_TIMEOUT", "180"))
 VALIDATE_TIMEOUT_SECONDS = int(os.environ.get("VALIDATE_TIMEOUT", "30"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("DOWNLOAD_TIMEOUT", "600"))
 
-MAX_VIDEOS_PER_LIST = int(os.environ.get("MAX_VIDEOS_PER_LIST", "25"))
-DEFAULT_VIDEOS_LIMIT = int(os.environ.get("DEFAULT_VIDEOS_LIMIT", "10"))
+TITLE_PARALLELISM = int(os.environ.get("TITLE_PARALLELISM", "4"))
+TITLES_MAX_BATCH = int(os.environ.get("TITLES_MAX_BATCH", "50"))
+
+MAX_VIDEOS_PER_LIST = int(os.environ.get("MAX_VIDEOS_PER_LIST", "100"))
+DEFAULT_VIDEOS_LIMIT = int(os.environ.get("DEFAULT_VIDEOS_LIMIT", "50"))
+PAGE_SIZE = int(os.environ.get("PAGE_SIZE", "25"))
 
 YTDLP_BIN = os.environ.get("YTDLP_BIN", "yt-dlp")
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
