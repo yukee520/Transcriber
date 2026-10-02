@@ -8,7 +8,7 @@ import { toApiError } from '@/api/client';
 const CREATOR_VIDEOS_KEY = 'creator-videos';
 const PAGE_SIZE = 25;
 const INITIAL_PAGE_SIZE = 50;
-const DYNAMIC_LIMIT = 200;
+const DYNAMIC_PAGE_SIZE = 100;
 
 interface UseCreatorVideosParams {
   creatorId: string;
@@ -32,7 +32,7 @@ interface UseCreatorVideosResult {
 
 interface PageResult {
   videos: BackendVideo[];
-  nextStartIndex: number | null;
+  nextCursor: string | null;
 }
 
 function isBilibili(platform: Platform): boolean {
@@ -53,17 +53,25 @@ export function useCreatorVideos({
     enabled: enabled && username.trim().length > 0,
     staleTime: 1000 * 60 * 60,
     retry: 0,
-    initialPageParam: 0,
-    getNextPageParam: useDynamic
-      ? () => undefined
-      : (lastPage) => lastPage.nextStartIndex ?? undefined,
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     queryFn: async ({ pageParam }) => {
+      const cursor = typeof pageParam === 'string' ? pageParam : '';
+
       if (useDynamic) {
         try {
-          const response = await fetchDynamicVideos(username, DYNAMIC_LIMIT);
+          const response = await fetchDynamicVideos(
+            username,
+            DYNAMIC_PAGE_SIZE,
+            cursor,
+          );
+          const nextCursor =
+            response.hasMore && response.nextOffset
+              ? response.nextOffset
+              : null;
           return {
             videos: response.videos,
-            nextStartIndex: null,
+            nextCursor,
           };
         } catch (err) {
           const apiError = toApiError(err);
@@ -71,8 +79,9 @@ export function useCreatorVideos({
         }
       }
 
-      const startIndex = typeof pageParam === 'number' ? pageParam : 0;
-      const isFirstPage = startIndex === 0;
+      const startIndex = Number.parseInt(cursor, 10);
+      const safeStart = Number.isFinite(startIndex) && startIndex > 0 ? startIndex : 0;
+      const isFirstPage = safeStart === 0;
       const limit = isFirstPage ? INITIAL_PAGE_SIZE : PAGE_SIZE;
 
       try {
@@ -80,13 +89,13 @@ export function useCreatorVideos({
           platform,
           username,
           limit,
-          startIndex,
+          startIndex: safeStart,
         });
         const returned = response.videos.length;
         const reachedEnd = returned < limit;
         return {
           videos: response.videos,
-          nextStartIndex: reachedEnd ? null : startIndex + returned,
+          nextCursor: reachedEnd ? null : String(safeStart + returned),
         };
       } catch (err) {
         const apiError = toApiError(err);
@@ -118,14 +127,13 @@ export function useCreatorVideos({
       void query.refetch();
     },
     isRefetching: query.isRefetching && !query.isFetchingNextPage,
-    hasMore: useDynamic ? false : query.hasNextPage ?? false,
+    hasMore: query.hasNextPage ?? false,
     loadMore: () => {
-      if (useDynamic) return;
       if (query.hasNextPage && !query.isFetchingNextPage) {
         void query.fetchNextPage();
       }
     },
-    isLoadingMore: useDynamic ? false : query.isFetchingNextPage,
+    isLoadingMore: query.isFetchingNextPage,
     source,
   };
 }
