@@ -14,6 +14,7 @@ from config import (
     DEFAULT_VIDEOS_LIMIT,
     LOG_LEVEL,
     MAX_VIDEOS_PER_LIST,
+    TITLES_MAX_BATCH,
     TMP_ROOT,
     ensure_dirs,
     model_exists,
@@ -23,6 +24,7 @@ from whisper_runner import WhisperError, run_transcription
 from ytdlp_client import (
     YtdlpError,
     download_audio,
+    fetch_titles_batch,
     list_creator_videos,
     validate_creator,
 )
@@ -33,7 +35,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("transcriber-api")
 
-app = FastAPI(title="Transcriber API", version="1.0.0")
+app = FastAPI(title="Transcriber API", version="1.1.0")
 
 
 class ValidateCreatorRequest(BaseModel):
@@ -52,6 +54,7 @@ class ListVideosRequest(BaseModel):
     platform: str
     username: str
     limit: int = Field(default=DEFAULT_VIDEOS_LIMIT, ge=1, le=MAX_VIDEOS_PER_LIST)
+    startIndex: int = Field(default=0, ge=0)
 
 
 class VideoItem(BaseModel):
@@ -65,6 +68,29 @@ class VideoItem(BaseModel):
 
 class ListVideosResponse(BaseModel):
     videos: list[VideoItem]
+
+
+class TitlesRequestItem(BaseModel):
+    videoId: str
+    url: str
+
+
+class TitlesRequest(BaseModel):
+    platform: str
+    videos: list[TitlesRequestItem] = Field(..., max_length=TITLES_MAX_BATCH)
+
+
+class VideoTitleItem(BaseModel):
+    videoId: str
+    title: str
+    thumbnailUrl: Optional[str] = None
+    durationSeconds: int
+    publishedAt: str
+    error: Optional[str] = None
+
+
+class TitlesResponse(BaseModel):
+    titles: list[VideoTitleItem]
 
 
 class TranscribeRequest(BaseModel):
@@ -84,6 +110,7 @@ class SegmentItem(BaseModel):
 class TranscribeResponse(BaseModel):
     language: str
     durationSeconds: float
+    title: Optional[str] = None
     text: str
     segments: list[SegmentItem]
 
@@ -120,6 +147,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "service": "transcriber-api",
+        "version": "1.1.0",
         "auth_required": bool(API_KEY),
         "default_model": DEFAULT_MODEL,
     }
@@ -161,6 +189,7 @@ def videos_list(payload: ListVideosRequest) -> ListVideosResponse:
             platform=payload.platform,
             username=payload.username,
             limit=payload.limit,
+            start_index=payload.startIndex,
         )
     except YtdlpError as exc:
         raise HTTPException(status_code=exc.status_hint, detail=str(exc)) from exc
@@ -178,6 +207,52 @@ def videos_list(payload: ListVideosRequest) -> ListVideosResponse:
             for v in entries
         ]
     )
+
+
+@app.post(
+    "/videos/titles",
+    response_model=TitlesResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def videos_titles(payload: TitlesRequest) -> TitlesResponse:
+    if not payload.videos:
+        return TitlesResponse(titles=[])
+
+    items = [(v.videoId, v.url) for v in payload.videos]
+
+    try:
+        details_map = fetch_titles_batch(payload.platform, items)
+    except Exception as exc:
+        logger.exception("Batch title fetch crashed")
+        raise HTTPException(status_code=502, detail=f"Title fetch failed: {exc}") from exc
+
+    out: list[VideoTitleItem] = []
+    for video_id, _ in items:
+        d = details_map.get(video_id)
+        if d is None:
+            out.append(
+                VideoTitleItem(
+                    videoId=video_id,
+                    title="",
+                    thumbnailUrl=None,
+                    durationSeconds=0,
+                    publishedAt="",
+                    error="no result",
+                )
+            )
+            continue
+        out.append(
+            VideoTitleItem(
+                videoId=d.video_id or video_id,
+                title=d.title or "",
+                thumbnailUrl=d.thumbnail_url,
+                durationSeconds=d.duration_seconds,
+                publishedAt=d.published_at,
+                error=d.error,
+            )
+        )
+
+    return TitlesResponse(titles=out)
 
 
 @app.post(
@@ -202,7 +277,7 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
     )
 
     try:
-        audio_path = download_audio(
+        download = download_audio(
             platform=payload.platform,
             video_url=payload.videoUrl,
             dest_dir=work_dir,
@@ -218,7 +293,7 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
 
     try:
         result = run_transcription(
-            audio_path=audio_path,
+            audio_path=download.audio_path,
             language=payload.language or "auto",
             model=model_name,
         )
@@ -234,16 +309,18 @@ def transcribe(payload: TranscribeRequest) -> TranscribeResponse:
     response = TranscribeResponse(
         language=result.language,
         durationSeconds=result.duration_seconds,
+        title=download.title or None,
         text=result.text,
         segments=[SegmentItem(**seg) for seg in segments_to_dicts(result.segments)],
     )
 
     _cleanup(work_dir)
     logger.info(
-        "Job %s done | %d segments | %.1fs audio",
+        "Job %s done | %d segments | %.1fs audio | title=%r",
         request_id,
         len(response.segments),
         response.durationSeconds,
+        (response.title or "")[:60],
     )
     return response
 
