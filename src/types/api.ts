@@ -1,3 +1,4 @@
+
 import type { Platform } from './creator';
 import type { TranscriptSegment } from './transcript';
 
@@ -19,6 +20,18 @@ export interface ListVideosRequest {
 
 export interface ListVideosResponse {
   videos: BackendVideo[];
+}
+
+export interface DynamicVideosRequest {
+  uid: string;
+  limit?: number;
+  offset?: string;
+}
+
+export interface DynamicVideosResponse {
+  videos: BackendVideo[];
+  nextOffset?: string | null;
+  hasMore?: boolean;
 }
 
 export interface TitleFetchItem {
