@@ -21,11 +21,11 @@ API_KEY = os.environ.get("API_KEY", "")
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 
-TRANSCRIBE_TIMEOUT_SECONDS = int(os.environ.get("TRANSCRIBE_TIMEOUT", "900"))
+TRANSCRIBE_TIMEOUT_SECONDS = int(os.environ.get("TRANSCRIBE_TIMEOUT", "7200"))
 VIDEOS_LIST_TIMEOUT_SECONDS = int(os.environ.get("VIDEOS_LIST_TIMEOUT", "60"))
 TITLES_TIMEOUT_SECONDS = int(os.environ.get("TITLES_TIMEOUT", "180"))
 VALIDATE_TIMEOUT_SECONDS = int(os.environ.get("VALIDATE_TIMEOUT", "30"))
-DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("DOWNLOAD_TIMEOUT", "600"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("DOWNLOAD_TIMEOUT", "1800"))
 
 TITLE_PARALLELISM = int(os.environ.get("TITLE_PARALLELISM", "4"))
 TITLES_MAX_BATCH = int(os.environ.get("TITLES_MAX_BATCH", "50"))
@@ -34,8 +34,19 @@ MAX_VIDEOS_PER_LIST = int(os.environ.get("MAX_VIDEOS_PER_LIST", "100"))
 DEFAULT_VIDEOS_LIMIT = int(os.environ.get("DEFAULT_VIDEOS_LIMIT", "50"))
 PAGE_SIZE = int(os.environ.get("PAGE_SIZE", "25"))
 
+# ---- Chunking settings ----
+# Videos longer than CHUNK_THRESHOLD_SECONDS will be split into
+# CHUNK_SIZE_SECONDS chunks (with CHUNK_OVERLAP_SECONDS of overlap
+# between adjacent chunks for context preservation).
+CHUNK_ENABLED = os.environ.get("CHUNK_ENABLED", "1") not in ("0", "false", "False")
+CHUNK_THRESHOLD_SECONDS = int(os.environ.get("CHUNK_THRESHOLD_SECONDS", "600"))
+CHUNK_SIZE_SECONDS = int(os.environ.get("CHUNK_SIZE_SECONDS", "300"))
+CHUNK_OVERLAP_SECONDS = int(os.environ.get("CHUNK_OVERLAP_SECONDS", "5"))
+CHUNK_MIN_TAIL_SECONDS = int(os.environ.get("CHUNK_MIN_TAIL_SECONDS", "10"))
+
 YTDLP_BIN = os.environ.get("YTDLP_BIN", "yt-dlp")
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
+FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
