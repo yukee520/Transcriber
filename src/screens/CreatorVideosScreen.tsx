@@ -12,6 +12,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useCreators } from '@/hooks/useCreators';
 import { useCreatorVideos } from '@/hooks/useCreatorVideos';
+import { useVideoTitles } from '@/hooks/useVideoTitles';
 import { useTranscribeSelected } from '@/hooks/useTranscribeSelected';
 import { useTranscriptsStore } from '@/store/useTranscriptsStore';
 import { useSettings } from '@/hooks/useSettings';
@@ -26,8 +27,6 @@ import type { BackendVideo } from '@/types/api';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type ScreenRoute = RouteProp<RootStackParamList, 'CreatorVideos'>;
-
-const VIDEO_LIMIT = 10;
 
 export default function CreatorVideosScreen() {
   const navigation = useNavigation<Nav>();
@@ -51,12 +50,23 @@ export default function CreatorVideosScreen() {
     error,
     refetch,
     isRefetching,
+    hasMore,
+    loadMore,
+    isLoadingMore,
   } = useCreatorVideos({
     creatorId,
     platform: creator?.platform ?? 'other',
     username: creator?.username ?? '',
-    limit: VIDEO_LIMIT,
     enabled: Boolean(creator) && isBackendConfigured,
+  });
+
+  const {
+    titleFor,
+    isLoading: titlesLoading,
+  } = useVideoTitles({
+    platform: creator?.platform ?? 'other',
+    videos,
+    enabled: Boolean(creator) && isBackendConfigured && videos.length > 0,
   });
 
   const transcripts = useTranscriptsStore((s) => s.transcripts);
@@ -100,6 +110,9 @@ export default function CreatorVideosScreen() {
     ({ item }: { item: BackendVideo }) => {
       const isSaved = savedVideoIds.has(item.videoId);
       const isSelected = selected.has(item.videoId);
+      const resolved = titleFor(item.videoId);
+      const isTitlePending = titlesLoading && !resolved && !item.title;
+
       return (
         <View className="mb-3">
           <VideoSelectCard
@@ -107,12 +120,14 @@ export default function CreatorVideosScreen() {
             selected={isSelected}
             saved={isSaved}
             disabled={isRunning}
+            titleLoading={isTitlePending}
+            resolvedTitle={resolved}
             onToggle={toggle}
           />
         </View>
       );
     },
-    [savedVideoIds, selected, isRunning, toggle],
+    [savedVideoIds, selected, isRunning, toggle, titleFor, titlesLoading],
   );
 
   const handleBack = useCallback(() => {
@@ -172,6 +187,44 @@ export default function CreatorVideosScreen() {
     (v) => !savedVideoIds.has(v.videoId),
   ).length;
 
+  const renderFooter = () => {
+    if (videos.length === 0) return null;
+
+    if (isLoadingMore) {
+      return (
+        <View className="py-4 items-center">
+          <ActivityIndicator size="small" color="#2563EB" />
+          <Text className="mt-2 text-xs text-muted dark:text-dark-muted">
+            Loading more…
+          </Text>
+        </View>
+      );
+    }
+
+    if (!hasMore) {
+      return (
+        <View className="py-4 items-center">
+          <Text className="text-xs text-muted dark:text-dark-muted">
+            No more videos
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <View className="pt-2 pb-4">
+        <Button
+          label="Load more"
+          onPress={loadMore}
+          variant="secondary"
+          icon="chevron-down"
+          fullWidth
+          size="sm"
+        />
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-background dark:bg-dark-background">
       <ScreenHeader
@@ -179,7 +232,7 @@ export default function CreatorVideosScreen() {
         subtitle={
           videos.length === 0
             ? 'Recent videos'
-            : `${videos.length} recent · ${selectableCount} new`
+            : `${videos.length} loaded · ${selectableCount} new`
         }
         showBack
         onBack={handleBack}
@@ -189,11 +242,11 @@ export default function CreatorVideosScreen() {
         data={videos}
         keyExtractor={(item) => item.videoId}
         renderItem={renderItem}
-        extraData={savedVideoIds}
+        extraData={{ savedVideoIds, selected, titlesLoading }}
         removeClippedSubviews
-        initialNumToRender={6}
-        maxToRenderPerBatch={6}
-        windowSize={5}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
@@ -214,6 +267,7 @@ export default function CreatorVideosScreen() {
             onAction={refetch}
           />
         }
+        ListFooterComponent={renderFooter}
       />
 
       {selected.size > 0 ? (
