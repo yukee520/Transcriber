@@ -2,13 +2,16 @@ import json
 import logging
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import (
     DOWNLOAD_TIMEOUT_SECONDS,
     MAX_VIDEOS_PER_LIST,
+    TITLE_PARALLELISM,
+    TITLES_TIMEOUT_SECONDS,
     VALIDATE_TIMEOUT_SECONDS,
     VIDEOS_LIST_TIMEOUT_SECONDS,
     build_ytdlp_args,
@@ -39,6 +42,22 @@ class CreatorInfo:
     name: Optional[str]
     avatar_url: Optional[str]
     error_message: Optional[str]
+
+
+@dataclass
+class VideoDetails:
+    video_id: str
+    title: str
+    thumbnail_url: Optional[str]
+    duration_seconds: int
+    published_at: str
+    error: Optional[str]
+
+
+@dataclass
+class DownloadResult:
+    audio_path: Path
+    title: str
 
 
 def _run_ytdlp(args: List[str], timeout: int) -> subprocess.CompletedProcess:
@@ -119,18 +138,54 @@ def _normalize_platform_url(platform: str, username: str) -> str:
     return mapping.get(platform, handle)
 
 
+def _build_video_url(platform: str, video_id: str) -> str:
+    if platform == "bilibili":
+        return f"https://www.bilibili.com/video/{video_id}"
+    if platform == "youtube":
+        return f"https://www.youtube.com/watch?v={video_id}"
+    if platform == "tiktok":
+        return f"https://www.tiktok.com/video/{video_id}"
+    return video_id
+
+
+def _parse_published(upload_date: str) -> str:
+    if upload_date and len(upload_date) == 8:
+        return f"{upload_date[0:4]}-{upload_date[4:6]}-{upload_date[6:8]}T00:00:00.000Z"
+    return upload_date or ""
+
+
+def _parse_duration(value) -> int:
+    try:
+        return int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pick_thumbnail(data: dict) -> Optional[str]:
+    thumbnails = data.get("thumbnails") or []
+    if isinstance(thumbnails, list) and thumbnails:
+        return thumbnails[-1].get("url")
+    return data.get("thumbnail")
+
+
 def list_creator_videos(
     platform: str,
     username: str,
     limit: int,
+    start_index: int = 0,
 ) -> List[VideoEntry]:
     limit = max(1, min(limit, MAX_VIDEOS_PER_LIST))
+    start_index = max(0, start_index)
+    end_index = start_index + limit - 1
+
     url = _normalize_platform_url(platform, username)
 
     args = [
         "--flat-playlist",
+        "--playlist-start",
+        str(start_index + 1),
         "--playlist-end",
-        str(limit),
+        str(end_index + 1),
         "--dump-json",
         "--skip-download",
         "--no-warnings",
@@ -158,44 +213,119 @@ def list_creator_videos(
         if not video_id:
             continue
         if not video_url:
-            if platform == "bilibili":
-                video_url = f"https://www.bilibili.com/video/{video_id}"
-            else:
-                continue
-
-        thumbnails = data.get("thumbnails") or []
-        thumbnail_url = None
-        if isinstance(thumbnails, list) and thumbnails:
-            thumbnail_url = thumbnails[-1].get("url")
-        if not thumbnail_url:
-            thumbnail_url = data.get("thumbnail")
-
-        duration = data.get("duration")
-        try:
-            duration_seconds = int(duration) if duration is not None else 0
-        except (TypeError, ValueError):
-            duration_seconds = 0
-
-        published = str(data.get("upload_date") or "")
-        if published and len(published) == 8:
-            published_iso = (
-                f"{published[0:4]}-{published[4:6]}-{published[6:8]}T00:00:00.000Z"
-            )
-        else:
-            published_iso = published or ""
+            video_url = _build_video_url(platform, video_id)
 
         videos.append(
             VideoEntry(
                 video_id=video_id,
                 title=title,
                 url=video_url,
-                thumbnail_url=thumbnail_url,
-                duration_seconds=duration_seconds,
-                published_at=published_iso,
+                thumbnail_url=_pick_thumbnail(data),
+                duration_seconds=_parse_duration(data.get("duration")),
+                published_at=_parse_published(str(data.get("upload_date") or "")),
             )
         )
 
     return videos[:limit]
+
+
+def fetch_title_for_video(
+    platform: str,
+    video_url: str,
+    timeout: int = TITLES_TIMEOUT_SECONDS,
+) -> VideoDetails:
+    video_id = ""
+    try:
+        # Cheap trick: extract id from url tail
+        tail = video_url.rstrip("/").split("/")[-1]
+        if "watch?v=" in video_url:
+            tail = video_url.split("watch?v=")[-1].split("&")[0]
+        video_id = tail
+    except Exception:
+        video_id = ""
+
+    args = [
+        "--dump-single-json",
+        "--skip-download",
+        "--no-warnings",
+        "--no-playlist",
+        video_url,
+    ]
+
+    try:
+        result = _run_ytdlp(args, timeout)
+    except YtdlpError as exc:
+        return VideoDetails(
+            video_id=video_id,
+            title="",
+            thumbnail_url=None,
+            duration_seconds=0,
+            published_at="",
+            error=str(exc),
+        )
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return VideoDetails(
+            video_id=video_id,
+            title="",
+            thumbnail_url=None,
+            duration_seconds=0,
+            published_at="",
+            error=_classify_error(result.stderr, result.stdout),
+        )
+
+    try:
+        data = json.loads(result.stdout.strip().splitlines()[0])
+    except (json.JSONDecodeError, IndexError):
+        data = {}
+
+    return VideoDetails(
+        video_id=str(data.get("id") or video_id),
+        title=str(data.get("title") or "").strip(),
+        thumbnail_url=_pick_thumbnail(data),
+        duration_seconds=_parse_duration(data.get("duration")),
+        published_at=_parse_published(str(data.get("upload_date") or "")),
+        error=None,
+    )
+
+
+def fetch_titles_batch(
+    platform: str,
+    items: List[Tuple[str, str]],
+    timeout: int = TITLES_TIMEOUT_SECONDS,
+) -> Dict[str, VideoDetails]:
+    """items: list of (videoId, videoUrl). Returns videoId -> VideoDetails."""
+    results: Dict[str, VideoDetails] = {}
+
+    if not items:
+        return results
+
+    def work(item: Tuple[str, str]) -> VideoDetails:
+        _, url = item
+        return fetch_title_for_video(platform, url, timeout=timeout)
+
+    workers = max(1, min(TITLE_PARALLELISM, len(items)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(work, item): item[0]
+            for item in items
+        }
+        for future in as_completed(future_map):
+            req_id = future_map[future]
+            try:
+                details = future.result()
+            except Exception as exc:
+                details = VideoDetails(
+                    video_id=req_id,
+                    title="",
+                    thumbnail_url=None,
+                    duration_seconds=0,
+                    published_at="",
+                    error=str(exc),
+                )
+            results[req_id] = details
+
+    return results
 
 
 def validate_creator(platform: str, username: str) -> CreatorInfo:
@@ -224,22 +354,30 @@ def validate_creator(platform: str, username: str) -> CreatorInfo:
     except (json.JSONDecodeError, IndexError):
         data = {}
 
+    # Only trust a channel name that looks like a real display name.
+    # yt-dlp's flat extraction often returns the numeric UID for Bilibili,
+    # which is not useful as a display name.
     name = (
         data.get("channel")
         or data.get("uploader")
-        or data.get("uploader_id")
-        or data.get("title")
+        or ""
     )
-    avatar_url = None
-    thumbnails = data.get("thumbnails") or []
-    if isinstance(thumbnails, list) and thumbnails:
-        avatar_url = thumbnails[-1].get("url")
+    name = str(name).strip() if name else ""
 
-    if not name:
-        handle = username.strip().lstrip("@")
-        name = f"@{handle}" if handle else "Unknown creator"
+    # Reject pure-numeric names (Bilibili UIDs) and clearly placeholder values.
+    if name:
+        digits_only = name.lstrip("@").isdigit()
+        if digits_only or name.lower() in ("unknown", "n/a", "null", "none"):
+            name = ""
 
-    return CreatorInfo(valid=True, name=name, avatar_url=avatar_url, error_message=None)
+    avatar_url = _pick_thumbnail(data)
+
+    return CreatorInfo(
+        valid=True,
+        name=name or None,
+        avatar_url=avatar_url,
+        error_message=None,
+    )
 
 
 def download_audio(
@@ -247,7 +385,7 @@ def download_audio(
     video_url: str,
     dest_dir: Path,
     timeout_seconds: int = DOWNLOAD_TIMEOUT_SECONDS,
-) -> Path:
+) -> DownloadResult:
     dest_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(dest_dir / "audio.%(ext)s")
 
@@ -260,6 +398,8 @@ def download_audio(
         "--no-playlist",
         "--no-warnings",
         "--no-cache-dir",
+        "--print",
+        "before_dl:%(title)s",
         "-o",
         output_template,
         video_url,
@@ -274,6 +414,13 @@ def download_audio(
         message = _classify_error(result.stderr, result.stdout)
         raise YtdlpError(message, status_hint=502)
 
+    title = ""
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line:
+            title = line
+            break
+
     candidates = sorted(dest_dir.glob("audio.*"))
     for candidate in candidates:
         if candidate.suffix.lower() in (
@@ -286,7 +433,7 @@ def download_audio(
             ".aac",
             ".flac",
         ):
-            return candidate
+            return DownloadResult(audio_path=candidate, title=title)
 
     raise YtdlpError(
         f"Download finished but no audio file was found in {dest_dir}.",
