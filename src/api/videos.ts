@@ -1,5 +1,7 @@
 import { createApiClient, assertBackendConfigured } from './client';
 import type {
+  DynamicVideosRequest,
+  DynamicVideosResponse,
   FetchTitlesRequest,
   FetchTitlesResponse,
   ListVideosRequest,
@@ -25,15 +27,28 @@ export async function fetchCreatorVideos(
 export async function fetchDynamicVideos(
   uid: string,
   limit: number = 100,
-): Promise<ListVideosResponse> {
+  offset: string = '',
+): Promise<DynamicVideosResponse> {
   assertBackendConfigured();
   const client = createApiClient();
-  const response = await client.post<ListVideosResponse>(
+
+  const body: DynamicVideosRequest = {
+    uid,
+    limit,
+    ...(offset ? { offset } : {}),
+  };
+
+  const response = await client.post<DynamicVideosResponse>(
     '/videos/dynamic',
-    { uid, limit },
+    body,
     { timeout: 180000 },
   );
-  return response.data;
+
+  return {
+    videos: response.data.videos ?? [],
+    nextOffset: response.data.nextOffset ?? null,
+    hasMore: Boolean(response.data.hasMore),
+  };
 }
 
 export async function fetchVideoTitles(
