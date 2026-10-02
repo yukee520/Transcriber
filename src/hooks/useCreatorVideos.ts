@@ -2,12 +2,13 @@ import { useMemo } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Platform } from '@/types/creator';
 import type { BackendVideo } from '@/types/api';
-import { fetchCreatorVideos } from '@/api/videos';
+import { fetchCreatorVideos, fetchDynamicVideos } from '@/api/videos';
 import { toApiError } from '@/api/client';
 
 const CREATOR_VIDEOS_KEY = 'creator-videos';
 const PAGE_SIZE = 25;
 const INITIAL_PAGE_SIZE = 50;
+const DYNAMIC_LIMIT = 200;
 
 interface UseCreatorVideosParams {
   creatorId: string;
@@ -26,11 +27,16 @@ interface UseCreatorVideosResult {
   hasMore: boolean;
   loadMore: () => void;
   isLoadingMore: boolean;
+  source: 'dynamic' | 'uploads';
 }
 
 interface PageResult {
   videos: BackendVideo[];
   nextStartIndex: number | null;
+}
+
+function isBilibili(platform: Platform): boolean {
+  return platform === 'bilibili';
 }
 
 export function useCreatorVideos({
@@ -39,14 +45,32 @@ export function useCreatorVideos({
   username,
   enabled = true,
 }: UseCreatorVideosParams): UseCreatorVideosResult {
+  const useDynamic = isBilibili(platform);
+  const source: 'dynamic' | 'uploads' = useDynamic ? 'dynamic' : 'uploads';
+
   const query = useInfiniteQuery<PageResult, Error>({
-    queryKey: [CREATOR_VIDEOS_KEY, creatorId, platform, username],
+    queryKey: [CREATOR_VIDEOS_KEY, creatorId, platform, username, source],
     enabled: enabled && username.trim().length > 0,
     staleTime: 1000 * 60 * 60,
     retry: 0,
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => lastPage.nextStartIndex ?? undefined,
+    getNextPageParam: useDynamic
+      ? () => undefined
+      : (lastPage) => lastPage.nextStartIndex ?? undefined,
     queryFn: async ({ pageParam }) => {
+      if (useDynamic) {
+        try {
+          const response = await fetchDynamicVideos(username, DYNAMIC_LIMIT);
+          return {
+            videos: response.videos,
+            nextStartIndex: null,
+          };
+        } catch (err) {
+          const apiError = toApiError(err);
+          throw new Error(apiError.message);
+        }
+      }
+
       const startIndex = typeof pageParam === 'number' ? pageParam : 0;
       const isFirstPage = startIndex === 0;
       const limit = isFirstPage ? INITIAL_PAGE_SIZE : PAGE_SIZE;
@@ -94,12 +118,14 @@ export function useCreatorVideos({
       void query.refetch();
     },
     isRefetching: query.isRefetching && !query.isFetchingNextPage,
-    hasMore: query.hasNextPage ?? false,
+    hasMore: useDynamic ? false : query.hasNextPage ?? false,
     loadMore: () => {
+      if (useDynamic) return;
       if (query.hasNextPage && !query.isFetchingNextPage) {
         void query.fetchNextPage();
       }
     },
-    isLoadingMore: query.isFetchingNextPage,
+    isLoadingMore: useDynamic ? false : query.isFetchingNextPage,
+    source,
   };
 }
