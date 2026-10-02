@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 
 # ---- Configuration ----
 # Edit these or export them before running.
-export API_KEY="${API_KEY:-change-me-please}"
+export API_KEY="${API_KEY:-tR8kYqZ9wP3xN5vM7cJ2bH4fG6dS1aL0}"
 export WHISPER_MODEL="${WHISPER_MODEL:-base}"
 export HOST="${HOST:-0.0.0.0}"
 export PORT="${PORT:-8000}"
