@@ -467,33 +467,36 @@ def download_audio(
     dest_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(dest_dir / "audio.%(ext)s")
 
-    args = [
-        "-f",
-        "bestaudio",
-        "-x",
-        "--audio-format",
-        "mp3",
-        "--audio-quality",
-        "5",
-        "--no-playlist",
-        "--no-warnings",
-        "--no-cache-dir",
-        "--print",
-        "before_dl:%(title)s",
-        "--retries",
-        "20",
-        "--fragment-retries",
-        "20",
-        "--socket-timeout",
-        "30",
-        "--limit-rate",
-        "2M",
-        "--sleep-requests",
-        "1",
-        "-o",
-        output_template,
-        video_url,
-    ]
+# Bilibili throttles large downloads. Using worstaudio/worst keeps the
+# transfer small enough to avoid the CDN's rate limit. Whisper doesn't
+# need high bitrate — 32-64 kbps mono is plenty for speech.
+args = [
+    "-f",
+    "worstaudio/worst",
+    "-x",
+    "--audio-format",
+    "mp3",
+    "--audio-quality",
+    "9",
+    "--no-playlist",
+    "--no-warnings",
+    "--no-cache-dir",
+    "--print",
+    "before_dl:%(title)s",
+    "--retries",
+    "20",
+    "--fragment-retries",
+    "20",
+    "--socket-timeout",
+    "30",
+    "--limit-rate",
+    "2M",
+    "--sleep-requests",
+    "1",
+    "-o",
+    output_template,
+    video_url,
+]
 
     started = time.monotonic()
     result = _run_ytdlp(args, timeout_seconds)
