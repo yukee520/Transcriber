@@ -161,19 +161,29 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
             ReturnType<typeof getTranscriptionStatus>
           > | null = null;
 
-          while (Date.now() < deadline) {
-            await sleep(POLL_INTERVAL_MS);
+while (Date.now() < deadline) {
+  await sleep(POLL_INTERVAL_MS);
 
-            let statusRes;
-            try {
-              statusRes = await getTranscriptionStatus(jobId);
-            } catch (pollErr) {
-              // Transient poll failures are tolerated; we keep trying.
-              if (__DEV__) {
-                console.warn('[transcribe] poll failed', pollErr);
-              }
-              continue;
-            }
+  let statusRes;
+  try {
+    statusRes = await getTranscriptionStatus(jobId);
+  } catch (pollErr) {
+    // If the server says the job doesn't exist (404), stop polling.
+    // This happens after a server restart — the in-memory job is gone.
+    const err = pollErr as { status?: number };
+    const statusCode =
+      typeof err?.status === 'number' ? err.status : undefined;
+    if (statusCode === 404) {
+      throw new Error(
+        'The job was lost on the server (server may have restarted). Retry.',
+      );
+    }
+    // Other errors are transient; keep trying.
+    if (__DEV__) {
+      console.warn('[transcribe] poll failed', pollErr);
+    }
+    continue;
+  }
 
             setProgress({
               current: i,
@@ -299,4 +309,4 @@ export function useTranscribeSelected(): UseTranscribeSelectedResult {
   );
 
   return { isRunning, progress, run };
-}
+} 
