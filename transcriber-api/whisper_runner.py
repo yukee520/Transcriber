@@ -1,4 +1,3 @@
-
 import logging
 import os
 import shutil
@@ -119,7 +118,9 @@ def _probe_duration(audio_path: Path) -> float:
     try:
         return float(raw[0])
     except ValueError as exc:
-        raise WhisperError(f"ffprobe returned invalid duration: {raw[0]!r}") from exc
+        raise WhisperError(
+            f"ffprobe returned invalid duration: {raw[0]!r}"
+        ) from exc
 
 
 def _run_whisper_on_file(
@@ -168,8 +169,9 @@ def _run_whisper_on_file(
         stderr_tail = (process.stderr or "")[-500:]
         stdout_tail = (process.stdout or "")[-500:]
         raise WhisperError(
-            f"Whisper exited with code {process.returncode} on {audio_path.name}. "
-            f"stderr: {stderr_tail!r} stdout: {stdout_tail!r}"
+            f"Whisper exited with code {process.returncode} on "
+            f"{audio_path.name}. stderr: {stderr_tail!r} "
+            f"stdout: {stdout_tail!r}"
         )
 
     after = {p.name for p in work_dir.iterdir() if p.is_file()}
@@ -208,12 +210,20 @@ def _offset_segments(
     ]
 
 
+def _word_overlap_ratio(a: str, b: str) -> float:
+    a_words = set(a.split())
+    b_words = set(b.split())
+    if not a_words or not b_words:
+        return 0.0
+    common = a_words & b_words
+    return len(common) / max(len(a_words), len(b_words))
+
+
 def _dedupe_overlap_segments(
     previous: List[SrtSegment],
     current: List[SrtSegment],
     overlap_seconds: float,
 ) -> List[SrtSegment]:
-    """Drop segments from `current` that clearly duplicate the tail of `previous`."""
     if not previous or not current or overlap_seconds <= 0:
         return current
 
@@ -221,9 +231,6 @@ def _dedupe_overlap_segments(
     trimmed: List[SrtSegment] = []
 
     for seg in current:
-        # If the segment starts before the previous chunk's end and its
-        # text overlaps significantly, we assume whisper re-transcribed
-        # the overlap and skip it.
         if seg.start < prev_tail.end and seg.end <= prev_tail.end + 1.0:
             prev_text = prev_tail.text.strip().lower()
             cur_text = seg.text.strip().lower()
@@ -238,15 +245,6 @@ def _dedupe_overlap_segments(
     return trimmed
 
 
-def _word_overlap_ratio(a: str, b: str) -> float:
-    a_words = set(a.split())
-    b_words = set(b.split())
-    if not a_words or not b_words:
-        return 0.0
-    common = a_words & b_words
-    return len(common) / max(len(a_words), len(b_words))
-
-
 def _build_chunks(
     audio_path: Path,
     work_dir: Path,
@@ -256,11 +254,7 @@ def _build_chunks(
     """Split audio into chunks. Returns list of (chunk_path, offset_seconds)."""
     _require_binary(FFMPEG_BIN, "ffmpeg")
 
-# Chunks are written directly into work_dir (no subdirectory) because
-# the whisper wrapper resolves output paths relative to its cwd and
-# produces no output when the input file is inside a nested folder.
-step = CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
-
+    step = CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
     if step <= 0:
         raise WhisperError(
             f"CHUNK_SIZE_SECONDS ({CHUNK_SIZE_SECONDS}) must be larger than "
@@ -362,10 +356,7 @@ def _chunked_transcribe(
             base_pct = 35.0
             span_pct = 60.0
             chunk_pct = base_pct + (i / max(total, 1)) * span_pct
-            progress(
-                chunk_pct,
-                f"Transcribing chunk {i + 1}/{total}…",
-            )
+            progress(chunk_pct, f"Transcribing chunk {i + 1}/{total}…")
 
         try:
             srt_path = _run_whisper_on_file(
@@ -376,9 +367,7 @@ def _chunked_transcribe(
                 work_dir=work_dir,
             )
         except WhisperError as exc:
-            raise WhisperError(
-                f"Chunk {i + 1}/{total} failed: {exc}"
-            ) from exc
+            raise WhisperError(f"Chunk {i + 1}/{total} failed: {exc}") from exc
 
         chunk_segments = _read_srt_segments(srt_path)
         chunk_segments = _offset_segments(chunk_segments, offset)
@@ -484,10 +473,7 @@ def run_transcription(
     if progress:
         progress(20.0, f"Audio is {duration:.0f}s")
 
-    should_chunk = (
-        CHUNK_ENABLED
-        and duration >= CHUNK_THRESHOLD_SECONDS
-    )
+    should_chunk = CHUNK_ENABLED and duration >= CHUNK_THRESHOLD_SECONDS
 
     if should_chunk:
         logger.info(
