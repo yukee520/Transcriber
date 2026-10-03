@@ -277,7 +277,7 @@ step = CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
             break
 
         length = min(CHUNK_SIZE_SECONDS, remaining)
-        out_path = chunks_dir / f"chunk_{index:04d}.mp3"
+        out_path = work_dir / f"chunk_{index:04d}.mp3"
 
         try:
             result = subprocess.run(
