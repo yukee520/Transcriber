@@ -467,42 +467,72 @@ def download_audio(
     dest_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(dest_dir / "audio.%(ext)s")
 
-# Bilibili throttles large downloads. Using worstaudio/worst keeps the
-# transfer small enough to avoid the CDN's rate limit. Whisper doesn't
-# need high bitrate — 32-64 kbps mono is plenty for speech.
-args = [
-    "-f",
-    "worstaudio/worst",
-    "-x",
-    "--audio-format",
-    "mp3",
-    "--audio-quality",
-    "9",
-    "--no-playlist",
-    "--no-warnings",
-    "--no-cache-dir",
-    "--print",
-    "before_dl:%(title)s",
-    "--retries",
-    "20",
-    "--fragment-retries",
-    "20",
-    "--socket-timeout",
-    "30",
-    "--limit-rate",
-    "2M",
-    "--sleep-requests",
-    "1",
-    "-o",
-    output_template,
-    video_url,
-]
+    # Bilibili throttles large downloads. Using worstaudio/worst keeps the
+    # transfer small enough to avoid the CDN's rate limit. Whisper doesn't
+    # need high bitrate — 32-64 kbps mono is plenty for speech.
+    args = [
+        "-f",
+        "worstaudio/worst",
+        "-x",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "9",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-cache-dir",
+        "--print",
+        "before_dl:%(title)s",
+        "--retries",
+        "20",
+        "--fragment-retries",
+        "20",
+        "--socket-timeout",
+        "30",
+        "--limit-rate",
+        "2M",
+        "--sleep-requests",
+        "1",
+        "-o",
+        output_template,
+        video_url,
+    ]
 
     started = time.monotonic()
     result = _run_ytdlp(args, timeout_seconds)
     elapsed = time.monotonic() - started
     logger.info(
         "yt-dlp download finished in %.1fs (exit %s)", elapsed, result.returncode
+    )
+
+    if result.returncode != 0:
+        message = _classify_error(result.stderr, result.stdout)
+        raise YtdlpError(message, status_hint=502)
+
+    title = ""
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line:
+            title = line
+            break
+
+    candidates = sorted(dest_dir.glob("audio.*"))
+    for candidate in candidates:
+        if candidate.suffix.lower() in (
+            ".mp3",
+            ".m4a",
+            ".wav",
+            ".ogg",
+            ".opus",
+            ".webm",
+            ".aac",
+            ".flac",
+        ):
+            return DownloadResult(audio_path=candidate, title=title)
+
+    raise YtdlpError(
+        f"Download finished but no audio file was found in {dest_dir}.",
+        status_hint=500,
     )
 
     if result.returncode != 0:
