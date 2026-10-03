@@ -256,12 +256,11 @@ def _build_chunks(
     """Split audio into chunks. Returns list of (chunk_path, offset_seconds)."""
     _require_binary(FFMPEG_BIN, "ffmpeg")
 
-    chunks_dir = work_dir / "chunks"
-    if chunks_dir.exists():
-        shutil.rmtree(chunks_dir, ignore_errors=True)
-    chunks_dir.mkdir(parents=True, exist_ok=True)
+# Chunks are written directly into work_dir (no subdirectory) because
+# the whisper wrapper resolves output paths relative to its cwd and
+# produces no output when the input file is inside a nested folder.
+step = CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
 
-    step = CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
     if step <= 0:
         raise WhisperError(
             f"CHUNK_SIZE_SECONDS ({CHUNK_SIZE_SECONDS}) must be larger than "
